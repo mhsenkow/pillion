@@ -10,6 +10,7 @@ export interface CoopZombieSnap {
 
 export interface CoopHostSnap {
   t: 'host';
+  at: number;
   bike: {
     x: number;
     z: number;
@@ -31,6 +32,9 @@ export interface CoopHostSnap {
   cz: number;
   scrap: number;
   kills: number;
+  horde: number;
+  place: string;
+  objective: string;
   zombies: CoopZombieSnap[];
 }
 

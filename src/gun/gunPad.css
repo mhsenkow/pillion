@@ -90,9 +90,29 @@ body,
   box-shadow: 0 0 10px rgba(74, 222, 128, 0.8);
 }
 
+.gun-vitals {
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: #fde68a;
+  padding: 8px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--pad-line);
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.gun-objective {
+  text-align: center;
+  font-size: 11px;
+  color: #7dd3fc;
+  line-height: 1.35;
+  min-height: 1.35em;
+}
+
 .gun-stage {
   display: grid;
-  grid-template-rows: minmax(160px, 42%) minmax(0, 1fr);
+  grid-template-rows: minmax(200px, 48%) minmax(120px, 1fr);
   gap: 12px;
   min-height: 0;
 }
@@ -119,6 +139,30 @@ body,
   font-size: 10px;
   color: var(--pad-mute);
   letter-spacing: 0.08em;
+  z-index: 2;
+}
+
+.gun-shooting {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 2;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: #fecdd3;
+  border: 1px solid rgba(251, 113, 133, 0.5);
+  background: rgba(159, 18, 57, 0.55);
+  opacity: 0;
+  transform: scale(0.92);
+  transition: opacity 0.08s linear, transform 0.08s linear;
+}
+
+.gun-shooting.on {
+  opacity: 1;
+  transform: scale(1);
 }
 
 .gun-aim {

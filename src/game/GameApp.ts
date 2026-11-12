@@ -123,6 +123,7 @@ export class GameApp {
   private coopPeerOnline = false;
   private lastCoopSend = 0;
   private remoteGun: CoopGunInput | null = null;
+  private remoteGunAt = 0;
   private remoteZombies: CoopZombieSnap[] = [];
   private lastHostDropKey = '';
 
@@ -1200,6 +1201,7 @@ export class GameApp {
       onHost: () => undefined,
       onGun: (gun) => {
         this.remoteGun = gun;
+        this.remoteGunAt = performance.now() / 1000;
         this.coopPeerOnline = true;
       },
       onDrop: () => undefined,
@@ -1286,49 +1288,49 @@ export class GameApp {
     }
   }
 
+  private phoneGunLive(now: number): boolean {
+    return this.coopRole === 'driver' && !!this.remoteGun && now - this.remoteGunAt < 1.2;
+  }
+
   private publishCoop(now: number): void {
-    if (!this.coop?.connected || !this.coopRole) return;
-    if (now - this.lastCoopSend < 0.05) return;
+    if (!this.coop?.connected || this.coopRole !== 'driver') return;
+    const gunnerListening = this.coopPeerOnline || this.phoneGunLive(now);
+    if (now - this.lastCoopSend < (gunnerListening ? 0.033 : 0.1)) return;
     this.lastCoopSend = now;
-    if (this.coopRole === 'driver') {
-      const b = this.state.bike;
-      this.coop.send({
-        t: 'host',
-        bike: {
-          x: b.x,
-          z: b.z,
-          vx: b.vx,
-          vz: b.vz,
-          heading: b.heading,
-          speed: b.speed,
-          lean: b.leanAngle,
-          drifting: b.drifting,
-          hp: b.hp,
-          fuel: b.fuel,
-        },
-        aim: this.state.partner.aimAngle,
-        weapon: this.state.partner.weaponIndex,
-        fire: this.state.mouseDown || this.state.partner.autoFire,
-        lat: this.state.baseLat,
-        lon: this.state.baseLon,
-        cx: this.state.chunkX,
-        cz: this.state.chunkZ,
-        scrap: this.state.scrap,
-        kills: this.state.kills,
-        zombies: this.zombies.slice(0, 40).map((z) => ({ x: z.x, z: z.z, kind: z.kind })),
-      });
-    } else {
-      this.coop.send({
-        t: 'gun',
-        aim: this.state.partner.aimAngle,
-        weapon: this.state.partner.weaponIndex,
-        autoAim: this.state.partner.autoAim,
-        autoFire: this.state.partner.autoFire,
-        fireHeld: this.state.mouseDown,
-        mx: this.state.mouseWorldPos.x,
-        mz: this.state.mouseWorldPos.z,
-      });
-    }
+    const b = this.state.bike;
+    const firing =
+      this.phoneGunLive(now) && this.remoteGun
+        ? this.remoteGun.fireHeld || this.remoteGun.autoFire
+        : this.state.mouseDown || this.state.partner.autoFire;
+    this.coop.send({
+      t: 'host',
+      at: now,
+      bike: {
+        x: b.x,
+        z: b.z,
+        vx: b.vx,
+        vz: b.vz,
+        heading: b.heading,
+        speed: b.speed,
+        lean: b.leanAngle,
+        drifting: b.drifting,
+        hp: b.hp,
+        fuel: b.fuel,
+      },
+      aim: this.state.partner.aimAngle,
+      weapon: this.state.partner.weaponIndex,
+      fire: !!firing,
+      lat: this.state.baseLat,
+      lon: this.state.baseLon,
+      cx: this.state.chunkX,
+      cz: this.state.chunkZ,
+      scrap: this.state.scrap,
+      kills: this.state.kills,
+      horde: this.zombies.length,
+      place: this.state.locationName,
+      objective: this.state.objective,
+      zombies: this.zombies.slice(0, 48).map((z) => ({ x: z.x, z: z.z, kind: z.kind })),
+    });
   }
 
   private async dropGps(lat: number, lon: number): Promise<void> {
@@ -1601,7 +1603,7 @@ export class GameApp {
       }
 
       this.state.partner.driverFiring = false;
-      const phoneGun = this.coopRole === 'driver' && this.remoteGun && this.coopPeerOnline;
+      const phoneGun = this.phoneGunLive(now);
       let threat = false;
       if (phoneGun && this.remoteGun) {
         const gun = this.remoteGun;
@@ -1615,6 +1617,7 @@ export class GameApp {
           this.state.partner.aimAngle = gun.aim;
           threat = this.zombies.some((z) => Math.hypot(z.x - this.state.bike.x, z.z - this.state.bike.z) < 13.5);
         }
+        this.hud.setWeapon(gun.weapon);
       } else {
         threat = updateAim(this.state, this.zombies);
       }
@@ -1633,7 +1636,6 @@ export class GameApp {
           }
         }
       }
-      this.publishCoop(now);
       if (this.state.bike.drifting && Math.random() < 0.08) {
         if (fireWeapon(this.state, now, this.bundle.entitiesGroup, this.projectiles, true)) {
           gameAudio.fire();
@@ -1904,6 +1906,9 @@ export class GameApp {
       this.bundle.skyDome.rotation.y = this.state.cameraYawOffset * 0.35;
       this.updateGisLabels();
     }
+
+    // Keep the phone pad fed even during hit-stop / short pauses.
+    this.publishCoop(now);
   }
 
   private startLoop(): void {
