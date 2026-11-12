@@ -3,6 +3,7 @@ import { resolve } from 'path';
 import type { Plugin } from 'vite';
 import { buildOverpassQueryFromBBox } from './src/geo/overpassQuery';
 import { bboxFromCenter, padBBox } from './src/geo/projection';
+import { coopDevProxy } from './vite.coopPlugin';
 
 const OVERPASS_MIRRORS = [
   'https://overpass.openstreetmap.fr/api/interpreter',
@@ -86,7 +87,7 @@ export default defineConfig({
       '@': resolve(__dirname, 'src'),
     },
   },
-  plugins: [osmDevProxy()],
+  plugins: [osmDevProxy(), coopDevProxy()],
   server: {
     port: 5173,
     strictPort: true,
@@ -95,5 +96,11 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        gun: resolve(__dirname, 'gun.html'),
+      },
+    },
   },
 });

@@ -1,0 +1,224 @@
+:root {
+  color-scheme: dark;
+  --pad-bg: #0b0d12;
+  --pad-ink: #e2e8f0;
+  --pad-mute: #94a3b8;
+  --pad-cyan: #7dd3fc;
+  --pad-amber: #fbbf24;
+  --pad-rose: #fb7185;
+  --pad-panel: rgba(15, 23, 42, 0.92);
+  --pad-line: rgba(255, 255, 255, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#gun-app {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--pad-bg);
+  color: var(--pad-ink);
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+
+.gun-shell {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: max(12px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(56, 189, 248, 0.12), transparent 55%),
+    linear-gradient(180deg, #101826 0%, #0b0d12 42%, #120f14 100%);
+}
+
+.gun-banner {
+  text-align: center;
+}
+
+.gun-banner h1 {
+  margin: 0;
+  font-size: clamp(22px, 6vw, 30px);
+  letter-spacing: 0.04em;
+  font-weight: 700;
+}
+
+.gun-banner p {
+  margin: 6px 0 0;
+  color: var(--pad-cyan);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.gun-banner .sub {
+  color: var(--pad-mute);
+  margin-top: 4px;
+}
+
+.gun-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--pad-line);
+  background: var(--pad-panel);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--pad-amber);
+}
+
+.gun-status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #64748b;
+}
+
+.gun-status.live .dot {
+  background: #4ade80;
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.8);
+}
+
+.gun-stage {
+  display: grid;
+  grid-template-rows: minmax(160px, 42%) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.gun-radar-wrap {
+  position: relative;
+  border-radius: 24px;
+  border: 1px solid var(--pad-line);
+  background: rgba(2, 6, 23, 0.75);
+  overflow: hidden;
+}
+
+.gun-radar-wrap canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.gun-radar-label {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--pad-mute);
+  letter-spacing: 0.08em;
+}
+
+.gun-aim {
+  position: relative;
+  border-radius: 28px;
+  border: 1px solid rgba(251, 191, 36, 0.28);
+  background:
+    radial-gradient(circle at center, rgba(251, 191, 36, 0.12), transparent 55%),
+    rgba(15, 23, 42, 0.7);
+  overflow: hidden;
+}
+
+.gun-aim-hint {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  pointer-events: none;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: rgba(253, 230, 138, 0.75);
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  transition: opacity 0.2s ease;
+}
+
+.gun-aim.dragging .gun-aim-hint {
+  opacity: 0;
+}
+
+.gun-stick {
+  position: absolute;
+  width: 72px;
+  height: 72px;
+  margin: -36px 0 0 -36px;
+  border-radius: 50%;
+  border: 2px solid rgba(251, 191, 36, 0.85);
+  background: rgba(251, 191, 36, 0.22);
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+  transition: transform 0.05s linear;
+}
+
+.gun-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.gun-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.gun-weapons {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.gun-btn {
+  appearance: none;
+  border: 1px solid var(--pad-line);
+  background: var(--pad-panel);
+  color: var(--pad-ink);
+  border-radius: 16px;
+  padding: 14px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.gun-btn.active {
+  border-color: rgba(125, 211, 252, 0.7);
+  background: rgba(14, 116, 144, 0.35);
+  color: #e0f2fe;
+}
+
+.gun-btn.fire {
+  grid-column: 1 / -1;
+  padding: 18px 12px;
+  font-size: 15px;
+  border-color: rgba(251, 113, 133, 0.55);
+  background: rgba(159, 18, 57, 0.35);
+  color: #fecdd3;
+}
+
+.gun-btn.fire.held,
+.gun-btn.fire.active {
+  background: rgba(225, 29, 72, 0.55);
+  border-color: #fb7185;
+}
+
+.gun-footer {
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--pad-mute);
+  line-height: 1.4;
+}

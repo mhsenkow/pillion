@@ -111,6 +111,8 @@ export interface PartnerState {
   weaponIndex: WeaponIndex;
   lastFireTime: number;
   autoAim: boolean;
+  /** Keep shooting at the current aim / nearest threat without holding the mouse. */
+  autoFire: boolean;
   driverFiring: boolean;
 }
 

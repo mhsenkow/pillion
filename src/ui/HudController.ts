@@ -29,6 +29,8 @@ export interface HudCallbacks {
   onToast?: (msg: string) => void;
   onReduceMotion?: (v: boolean) => void;
   onMute?: () => void;
+  onShareRide?: () => void;
+  onAutoFire?: () => void;
 }
 
 type PanelId = 'nav' | 'vitals' | 'loadout' | 'radar';
@@ -155,8 +157,9 @@ export class HudController {
       <div style="display:flex;justify-content:space-between;margin-bottom:8px">
         <span class="mono" style="font-size:10px;color:#94a3b8">WEAPONS</span>
         <button class="hud-btn" id="btn-aim">AIM: AUTO + CURSOR</button>
+        <button class="hud-btn active" id="btn-autofire" title="Keep shooting at the aim without holding click">AUTO FIRE: ON</button>
       </div>
-      <div class="mono" style="font-size:8px;color:#94a3b8;margin:-2px 0 8px;line-height:1.35">1 OPENS A WALL COLUMN · 3 BLOWS A HOLE AND THE BUILDING CATCHES</div>
+      <div class="mono" style="font-size:8px;color:#94a3b8;margin:-2px 0 8px;line-height:1.35">CAST THIS TO THE TV · SHARE PHONE GUN sends a controller link · auto fire on</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px">
         ${WEAPONS.map(
           (w, i) =>
@@ -216,6 +219,8 @@ export class HudController {
 
       <div class="hud-chrome">
         <button type="button" class="hud-btn" id="btn-hide-menus" title="Hide or show all HUD panels">HIDE MENUS [H]</button>
+        <button type="button" class="hud-btn" id="btn-share-ride" title="Copy a phone gunner link. Cast this screen to the TV; they only get a controller.">SHARE PHONE GUN</button>
+        <span id="coop-status" class="mono" style="font-size:9px;color:#7dd3fc;margin-left:8px"></span>
       </div>
 
       ${this.dock('nav', 'NAV', 'top:12px;left:12px', navBody, 'width:min(94vw,380px)')}
@@ -315,6 +320,8 @@ export class HudController {
       btn.addEventListener('click', () => this.cbs.onWeapon(parseInt((btn as HTMLElement).dataset.weapon!, 10) as 0 | 1 | 2));
     });
     this.$('#btn-aim').addEventListener('click', () => this.cbs.onAimMode());
+    this.$('#btn-autofire').addEventListener('click', () => this.cbs.onAutoFire?.());
+    this.$('#btn-share-ride').addEventListener('click', () => this.cbs.onShareRide?.());
     this.$('#slider-dof').addEventListener('input', (e) => this.cbs.onDof(parseFloat((e.target as HTMLInputElement).value)));
     this.$('#slider-pitch').addEventListener('input', (e) => this.cbs.onPitch(parseFloat((e.target as HTMLInputElement).value)));
     this.$('#btn-flow').addEventListener('click', () => this.cbs.onFlowDebug());
@@ -642,6 +649,22 @@ export class HudController {
 
   setAimLabel(auto: boolean): void {
     this.$('#btn-aim').textContent = auto ? 'AIM: AUTO + CURSOR' : 'AIM: MANUAL';
+  }
+
+  setAutoFireLabel(on: boolean): void {
+    const btn = this.$('#btn-autofire');
+    btn.textContent = on ? 'AUTO FIRE: ON' : 'AUTO FIRE: OFF';
+    btn.classList.toggle('active', on);
+  }
+
+  setCoopStatus(text: string): void {
+    const el = this.$('#coop-status');
+    if (el) el.textContent = text;
+  }
+
+  setShareRideLabel(text: string): void {
+    const btn = this.$('#btn-share-ride');
+    if (btn) btn.textContent = text;
   }
 
   setWeapon(i: number): void {

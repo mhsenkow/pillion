@@ -38,6 +38,7 @@ Dry-run without upload: `npm run deploy:dry`.
 | F | Firebomb overcharge (40 scrap) |
 | P | Pause |
 | 0 | Clear run and return to Emmett |
+| SHARE PHONE GUN | Copy a phone controller link (TV keeps the diorama) |
 | M | Mute / unmute audio |
 | C | Couple & Ride Customizer |
 | I / F2 | Dev Model Inspector |

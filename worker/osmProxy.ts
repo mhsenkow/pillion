@@ -1,12 +1,16 @@
 /**
- * Proxies Overpass OSM queries so the browser isn't blocked by CORS / flaky public mirrors.
- * GET /api/osm?lat=&lon=  or  ?s=&w=&n=&e=
+ * Proxies Overpass OSM queries and hosts co-op ride rooms (Durable Objects).
  */
 import { buildOverpassQueryFromBBox } from '../src/geo/overpassQuery';
 import { bboxFromCenter, padBBox, type GeoBBox } from '../src/geo/projection';
+import { newRoomCode } from '../src/net/coopProtocol';
+import { RideRoom } from './rideRoom';
+
+export { RideRoom };
 
 export interface Env {
   ASSETS: Fetcher;
+  RIDE_ROOMS: DurableObjectNamespace<RideRoom>;
 }
 
 const MIRRORS = [
@@ -41,6 +45,21 @@ async function fetchOverpass(query: string): Promise<Response | null> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === '/api/coop/new') {
+      const code = newRoomCode();
+      return json({ code, join: `/?coop=${code}` }, 200, request);
+    }
+
+    if (url.pathname === '/api/coop/ws') {
+      const code = (url.searchParams.get('code') || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (code.length < 3) return json({ error: 'bad_code' }, 400, request);
+      const id = env.RIDE_ROOMS.idFromName(code);
+      const stub = env.RIDE_ROOMS.get(id);
+      const corner = new URL(request.url);
+      corner.searchParams.set('code', code);
+      return stub.fetch(new Request(corner.toString(), request));
+    }
 
     if (url.pathname === '/api/osm') {
       if (request.method === 'OPTIONS') {

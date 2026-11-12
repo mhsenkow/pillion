@@ -1,10 +1,15 @@
 import './styles/main.css';
 import { GameApp } from './game/GameApp';
+import { parseCoopQuery } from './net/coopProtocol';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('#app root missing');
 
-try {
+// Phone gunner links should open the light controller, not the full TV diorama.
+const coop = parseCoopQuery();
+if (coop && !new URLSearchParams(location.search).has('tv')) {
+  location.replace(`/gun.html?coop=${encodeURIComponent(coop)}`);
+} else try {
   new GameApp(app);
 } catch (err) {
   const msg = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);

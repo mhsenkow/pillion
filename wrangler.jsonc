@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
-  // Pillion — Vite SPA + Overpass OSM proxy. Deploy: npm run deploy → pillion.ibm.io
+  // Pillion — Vite SPA + Overpass OSM proxy + co-op rooms. Deploy: npm run deploy → pillion.ibm.io
   "name": "pillion",
   "main": "worker/osmProxy.ts",
   "compatibility_date": "2026-09-25",
@@ -10,6 +10,10 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
   },
+  "durable_objects": {
+    "bindings": [{ "name": "RIDE_ROOMS", "class_name": "RideRoom" }]
+  },
+  "migrations": [{ "tag": "v1-ride-rooms", "new_sqlite_classes": ["RideRoom"] }],
   "routes": [
     { "pattern": "pillion.ibm.io", "custom_domain": true }
   ],

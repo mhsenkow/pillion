@@ -57,6 +57,16 @@ import { DevModelInspector } from '../ui/DevModelInspector';
 import { gameAudio } from '../audio/GameAudio';
 import { createLootMesh, LOOT_CRATE_GEO } from '../simulation/lootHelpers';
 import { StructureField } from '../simulation/structureDamage';
+import { CoopClient } from '../net/coopClient';
+import {
+  coopShareUrl,
+  parseCoopQuery,
+  writeCoopQuery,
+  type CoopGunInput,
+  type CoopHostSnap,
+  type CoopRole,
+  type CoopZombieSnap,
+} from '../net/coopProtocol';
 import { installRideInput } from './bindRideInput';
 import { ChunkMeshCache, type ChunkSnap } from './chunkCache';
 
@@ -108,6 +118,13 @@ export class GameApp {
   private activeChunkKey = '';
   private lastFlowCell = '';
   private goal: { gx: number; gz: number; wx: number; wz: number; label: string } | null = null;
+  private coop: CoopClient | null = null;
+  private coopRole: CoopRole | null = null;
+  private coopPeerOnline = false;
+  private lastCoopSend = 0;
+  private remoteGun: CoopGunInput | null = null;
+  private remoteZombies: CoopZombieSnap[] = [];
+  private lastHostDropKey = '';
 
   constructor(appRoot: HTMLElement) {
     this.canvasEl = document.createElement('div');
@@ -172,7 +189,14 @@ export class GameApp {
         hp: 100,
         fuel: 100,
       },
-      partner: { aimAngle: Math.PI, weaponIndex: 0, lastFireTime: 0, autoAim: true, driverFiring: false },
+      partner: {
+        aimAngle: Math.PI,
+        weaponIndex: 0,
+        lastFireTime: 0,
+        autoAim: true,
+        autoFire: true,
+        driverFiring: false,
+      },
       transition: { active: false, progress: 1, offsetX: 0, offsetZ: 0 },
       keys: { up: false, down: false, left: false, right: false, space: false },
       mouseDown: false,
@@ -201,14 +225,19 @@ export class GameApp {
     void this.syncOsm();
     this.bindInput();
     this.startLoop();
-    if (urlDrop) {
+    this.hud.setAutoFireLabel(this.state.partner.autoFire);
+    const coopCode = parseCoopQuery();
+    const tvSeat = new URLSearchParams(location.search).has('tv');
+    if (coopCode && tvSeat) {
+      void this.joinCoop(coopCode, 'driver');
+    } else if (urlDrop) {
       void reverseNominatim(urlDrop.lat, urlDrop.lon).then((name) => {
         this.state.locationName = name;
         this.hud.showToast(`DROPPED INTO ${name.toUpperCase()}`);
       });
     } else if (!run) {
       window.setTimeout(() => {
-        this.hud.showToast('TIP: [1] OPENS A WALL · [3] BLOWS A HOLE AND LIGHTS IT');
+        this.hud.showToast('TIP: CAST THIS TO THE TV · SHARE RIDE SENDS MOM A PHONE GUN');
       }, 1800);
     }
   }
@@ -243,6 +272,12 @@ export class GameApp {
         this.state.partner.autoAim = !this.state.partner.autoAim;
         this.hud.setAimLabel(this.state.partner.autoAim);
       },
+      onAutoFire: () => {
+        this.state.partner.autoFire = !this.state.partner.autoFire;
+        this.hud.setAutoFireLabel(this.state.partner.autoFire);
+        this.hud.showToast(this.state.partner.autoFire ? 'AUTO FIRE ON' : 'AUTO FIRE OFF · HOLD CLICK');
+      },
+      onShareRide: () => void this.shareRide(),
       onDof: (v) => document.documentElement.style.setProperty('--tilt-blur', `${v}px`),
       onPitch: (v) => (this.state.cameraPitchDeg = v),
       onFlowDebug: () => {
@@ -1110,6 +1145,190 @@ export class GameApp {
     void this.syncOsm();
     this.refreshObjective();
     this.hud.showToast(`DROPPED INTO ${name.toUpperCase()}`);
+    if (this.coopRole === 'driver' && this.coop?.connected) {
+      this.coop.send({ t: 'drop', lat, lon, name, biome });
+    }
+  }
+
+  private async shareRide(): Promise<void> {
+    try {
+      if (!this.coop) this.coop = this.makeCoopClient();
+      if (!this.coop.roomCode) {
+        const code = await this.coop.createRoom();
+        writeCoopQuery(code, true);
+        this.coop.connect(code, 'driver');
+      }
+      const url = coopShareUrl(this.coop.roomCode);
+      await navigator.clipboard.writeText(url);
+      this.hud.setShareRideLabel('LINK COPIED');
+      this.hud.setCoopStatus(`TV DRIVER · ${this.coop.roomCode}`);
+      this.hud.showToast('PHONE LINK COPIED — SEND IT · THEY ONLY GET THE GUN PAD');
+      window.setTimeout(() => this.hud.setShareRideLabel('SHARE PHONE GUN'), 2400);
+    } catch (err) {
+      this.hud.showToast(err instanceof Error ? err.message.toUpperCase() : 'COULD NOT OPEN RIDE');
+    }
+  }
+
+  private async joinCoop(code: string, preferred: CoopRole | 'auto'): Promise<void> {
+    if (!this.coop) this.coop = this.makeCoopClient();
+    writeCoopQuery(code, preferred === 'driver');
+    this.coop.connect(code, preferred);
+    this.hud.setCoopStatus(`JOINING ${code}…`);
+  }
+
+  private makeCoopClient(): CoopClient {
+    return new CoopClient({
+      onWelcome: (role, code, peers) => {
+        this.coopRole = role;
+        this.coopPeerOnline = peers > 1;
+        this.hud.setCoopStatus(role === 'driver' ? `TV DRIVER · ${code}` : `GUNNER · ${code}`);
+        this.hud.showToast(
+          role === 'driver' ? 'TV IS THE RIDE · WAITING FOR PHONE GUNNER' : 'PHONE GUNNER SEATED',
+        );
+      },
+      onPeer: (role, online, peers) => {
+        this.coopPeerOnline = peers > 1;
+        if (role === 'gunner') {
+          this.hud.showToast(online ? 'PHONE GUNNER CONNECTED · THEY AIM ON THEIR SCREEN' : 'PHONE GUNNER LEFT');
+        }
+        if (this.coopRole && this.coop) {
+          this.hud.setCoopStatus(
+            `TV DRIVER · ${this.coop.roomCode}${peers > 1 ? ' · PHONE LIVE' : ' · SEND LINK'}`,
+          );
+        }
+      },
+      onHost: () => undefined,
+      onGun: (gun) => {
+        this.remoteGun = gun;
+        this.coopPeerOnline = true;
+      },
+      onDrop: () => undefined,
+      onToast: (text) => this.hud.showToast(text),
+      onStatus: (text) => this.hud.setCoopStatus(text),
+    });
+  }
+
+  private applyHostSnap(snap: CoopHostSnap): void {
+    if (this.coopRole !== 'gunner') return;
+    const b = this.state.bike;
+    b.x = snap.bike.x;
+    b.z = snap.bike.z;
+    b.vx = snap.bike.vx;
+    b.vz = snap.bike.vz;
+    b.heading = snap.bike.heading;
+    b.speed = snap.bike.speed;
+    b.leanAngle = snap.bike.lean;
+    b.drifting = snap.bike.drifting;
+    b.hp = snap.bike.hp;
+    b.fuel = snap.bike.fuel;
+    this.state.scrap = snap.scrap;
+    this.state.kills = snap.kills;
+    this.state.partner.aimAngle = snap.aim;
+    this.state.partner.weaponIndex = snap.weapon;
+    this.hud.setWeapon(snap.weapon);
+    this.remoteZombies = snap.zombies;
+    const dropKey = `${snap.lat.toFixed(4)}_${snap.lon.toFixed(4)}_${snap.cx}_${snap.cz}`;
+    if (dropKey !== this.lastHostDropKey) {
+      this.lastHostDropKey = dropKey;
+      if (
+        Math.abs(this.state.baseLat - snap.lat) > 0.00005 ||
+        Math.abs(this.state.baseLon - snap.lon) > 0.00005 ||
+        this.state.chunkX !== snap.cx ||
+        this.state.chunkZ !== snap.cz
+      ) {
+        this.state.baseLat = snap.lat;
+        this.state.baseLon = snap.lon;
+        this.state.chunkX = snap.cx;
+        this.state.chunkZ = snap.cz;
+        this.pendingRoadSnap = false;
+        if (isNearEmmett(snap.lat, snap.lon) && snap.cx === 0 && snap.cz === 0) {
+          this.generateChunk(emmettOsmFallback());
+        } else {
+          this.generateChunk(this.osmForChunk(snap.cx, snap.cz));
+        }
+        void this.syncOsm();
+      }
+    }
+    this.syncGunnerZombies(snap.zombies);
+  }
+
+  private syncGunnerZombies(snaps: CoopZombieSnap[]): void {
+    while (this.zombies.length > snaps.length) {
+      const z = this.zombies.pop()!;
+      this.bundle.entitiesGroup.remove(z.mesh);
+      this.disposeEntityMesh(z.mesh);
+    }
+    for (let i = 0; i < snaps.length; i++) {
+      const snap = snaps[i];
+      let z = this.zombies[i];
+      if (!z) {
+        const kind = (snap.kind as ZombieKind) || 'walker';
+        const mesh = buildZombie(kind);
+        this.bundle.entitiesGroup.add(mesh);
+        z = {
+          mesh,
+          x: snap.x,
+          z: snap.z,
+          vx: 0,
+          vz: 0,
+          hp: 40,
+          speed: 2.5,
+          kind,
+          phase: Math.random() * Math.PI * 2,
+          steppedY: 0,
+          steppedRotZ: 0,
+        };
+        this.zombies.push(z);
+      }
+      z.x = snap.x;
+      z.z = snap.z;
+      z.mesh.position.set(snap.x, 0, snap.z);
+    }
+  }
+
+  private publishCoop(now: number): void {
+    if (!this.coop?.connected || !this.coopRole) return;
+    if (now - this.lastCoopSend < 0.05) return;
+    this.lastCoopSend = now;
+    if (this.coopRole === 'driver') {
+      const b = this.state.bike;
+      this.coop.send({
+        t: 'host',
+        bike: {
+          x: b.x,
+          z: b.z,
+          vx: b.vx,
+          vz: b.vz,
+          heading: b.heading,
+          speed: b.speed,
+          lean: b.leanAngle,
+          drifting: b.drifting,
+          hp: b.hp,
+          fuel: b.fuel,
+        },
+        aim: this.state.partner.aimAngle,
+        weapon: this.state.partner.weaponIndex,
+        fire: this.state.mouseDown || this.state.partner.autoFire,
+        lat: this.state.baseLat,
+        lon: this.state.baseLon,
+        cx: this.state.chunkX,
+        cz: this.state.chunkZ,
+        scrap: this.state.scrap,
+        kills: this.state.kills,
+        zombies: this.zombies.slice(0, 40).map((z) => ({ x: z.x, z: z.z, kind: z.kind })),
+      });
+    } else {
+      this.coop.send({
+        t: 'gun',
+        aim: this.state.partner.aimAngle,
+        weapon: this.state.partner.weaponIndex,
+        autoAim: this.state.partner.autoAim,
+        autoFire: this.state.partner.autoFire,
+        fireHeld: this.state.mouseDown,
+        mx: this.state.mouseWorldPos.x,
+        mz: this.state.mouseWorldPos.z,
+      });
+    }
   }
 
   private async dropGps(lat: number, lon: number): Promise<void> {
@@ -1382,8 +1601,27 @@ export class GameApp {
       }
 
       this.state.partner.driverFiring = false;
-      const threat = updateAim(this.state, this.zombies);
-      if (this.state.mouseDown || threat) {
+      const phoneGun = this.coopRole === 'driver' && this.remoteGun && this.coopPeerOnline;
+      let threat = false;
+      if (phoneGun && this.remoteGun) {
+        const gun = this.remoteGun;
+        this.state.partner.weaponIndex = gun.weapon;
+        this.state.partner.autoAim = gun.autoAim;
+        this.state.partner.autoFire = gun.autoFire;
+        this.state.mouseWorldPos.set(gun.mx, 0, gun.mz);
+        if (gun.autoAim) {
+          threat = updateAim(this.state, this.zombies);
+        } else {
+          this.state.partner.aimAngle = gun.aim;
+          threat = this.zombies.some((z) => Math.hypot(z.x - this.state.bike.x, z.z - this.state.bike.z) < 13.5);
+        }
+      } else {
+        threat = updateAim(this.state, this.zombies);
+      }
+      const shouldFire = phoneGun
+        ? !!(this.remoteGun && (this.remoteGun.fireHeld || (this.remoteGun.autoFire && threat)))
+        : this.state.mouseDown || threat || (this.state.partner.autoFire && threat);
+      if (shouldFire) {
         if (fireWeapon(this.state, now, this.bundle.entitiesGroup, this.projectiles, false)) {
           gameAudio.fire();
           this.hud.pulseCrosshair();
@@ -1395,6 +1633,7 @@ export class GameApp {
           }
         }
       }
+      this.publishCoop(now);
       if (this.state.bike.drifting && Math.random() < 0.08) {
         if (fireWeapon(this.state, now, this.bundle.entitiesGroup, this.projectiles, true)) {
           gameAudio.fire();
