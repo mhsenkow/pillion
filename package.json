@@ -1,0 +1,27 @@
+{
+  "name": "pillion",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "deploy": "npm run build && wrangler deploy",
+    "deploy:dry": "npm run build && wrangler deploy --dry-run",
+    "check": "node scripts/minute-playtest.mjs"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.170.0",
+    "typescript": "~5.6.3",
+    "vite": "^6.0.1",
+    "wrangler": "^4.149.0"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true
+  }
+}
+

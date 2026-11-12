@@ -1,0 +1,2568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>PILLION // GRIDFALL 1:1 — Tilt-Shift Voxel Diorama Survival</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --tilt-blur: 6px;
+      --vignette-opacity: 0.55;
+    }
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #0b0d12;
+      font-family: 'Space Grotesk', sans-serif;
+      color: #f3f4f6;
+    }
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    #canvas-container {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+    /* Optical Tilt-Shift Miniature Lens Simulation */
+    .tilt-shift-top {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 27%;
+      pointer-events: none;
+      z-index: 5;
+      backdrop-filter: blur(var(--tilt-blur)) saturate(1.25);
+      -webkit-backdrop-filter: blur(var(--tilt-blur)) saturate(1.25);
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.65) 45%, rgba(0,0,0,0) 100%);
+      -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,0.65) 45%, rgba(0,0,0,0) 100%);
+    }
+    .tilt-shift-bottom {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 26%;
+      pointer-events: none;
+      z-index: 5;
+      backdrop-filter: blur(var(--tilt-blur)) saturate(1.25);
+      -webkit-backdrop-filter: blur(var(--tilt-blur)) saturate(1.25);
+      mask-image: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.65) 45%, rgba(0,0,0,0) 100%);
+      -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,0.65) 45%, rgba(0,0,0,0) 100%);
+    }
+    .lens-vignette {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 6;
+      background: radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 52%, rgba(5,7,11,var(--vignette-opacity)) 100%);
+      box-shadow: inset 0 0 90px rgba(0,0,0,0.75);
+    }
+    .hud-panel {
+      background: rgba(14, 17, 24, 0.84);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .hud-btn {
+      transition: all 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    .hud-btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(251, 191, 36, 0.6);
+    }
+    .hud-btn:active {
+      transform: translateY(1px);
+    }
+    .weapon-active {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.28), rgba(217, 119, 6, 0.12));
+      border-color: #f59e0b !important;
+      color: #fde68a;
+      box-shadow: 0 0 15px rgba(245, 158, 11, 0.25);
+    }
+    input[type="range"] {
+      accent-color: #f59e0b;
+    }
+    /* Custom Crosshair */
+    #crosshair {
+      position: fixed;
+      width: 28px;
+      height: 28px;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 30;
+      transition: transform 0.06s ease-out;
+    }
+    @keyframes pulse-fast {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+    .animate-pulse-fast {
+      animation: pulse-fast 1.1s infinite;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 3D WebGL Diorama Container -->
+  <div id="canvas-container"></div>
+
+  <!-- Optical Tilt-Shift Lens Blur Planes & Vignette -->
+  <div id="tilt-top" class="tilt-shift-top"></div>
+  <div id="tilt-bottom" class="tilt-shift-bottom"></div>
+  <div class="lens-vignette"></div>
+
+  <!-- Dynamic 3D Aiming Reticle -->
+  <div id="crosshair">
+    <svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="18" cy="18" r="11" stroke="#fbbf24" stroke-width="1.8" stroke-dasharray="4 3"/>
+      <circle cx="18" cy="18" r="2.5" fill="#f87171"/>
+      <path d="M18 2V7M18 29V34M2 18H7M29 18H34" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round"/>
+    </svg>
+  </div>
+
+  <!-- Chunk Transition Banner Overlay -->
+  <div id="chunk-toast" class="fixed top-20 left-1/2 -translate-x-1/2 z-20 pointer-events-none opacity-0 transition-all duration-300 transform -translate-y-2">
+    <div class="hud-panel px-5 py-2 rounded-full flex items-center gap-3 border-amber-500/40">
+      <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+      <span id="chunk-toast-text" class="mono text-xs tracking-widest uppercase text-amber-200 font-bold">ENTERING SECTOR [0, 0]</span>
+    </div>
+  </div>
+
+  <!-- TOP-LEFT HUD: Real-World GPS Telemetry & Preset Selector -->
+  <div class="fixed top-3 left-3 z-20 flex flex-col gap-2 max-w-xs sm:max-w-md w-[94vw] sm:w-auto">
+    <div class="hud-panel rounded-xl p-3.5">
+      <div class="flex items-center justify-between gap-2 border-b border-white/10 pb-2 mb-2.5">
+        <div class="flex items-center gap-2">
+          <div class="w-3 h-3 rounded-sm bg-amber-500 shadow-[0_0_10px_#f59e0b]"></div>
+          <div>
+            <h1 class="text-sm font-bold tracking-wider uppercase text-white leading-none">PILLION <span class="text-amber-400 font-mono text-xs">// GRIDFALL 1:1</span></h1>
+            <p id="hud-street-banner" class="text-[10px] mono text-amber-300/90 mt-0.5 font-semibold">EMMETT, MI • M-19 (MAIN ST) & BRANDON RD</p>
+          </div>
+        </div>
+        <span id="osm-badge" class="mono text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold shrink-0">
+          VERIFIED GIS + OSM
+        </span>
+      </div>
+
+      <!-- Real-World Coordinates & Chunk ID -->
+      <div class="grid grid-cols-2 gap-2 mb-2.5 bg-black/40 p-2 rounded-lg border border-white/5">
+        <div>
+          <div class="text-[10px] mono text-slate-400 uppercase">GPS TELEMETRY</div>
+          <div id="hud-latlon" class="mono text-xs font-bold text-amber-300 truncate">42.9906°N, 82.7649°W</div>
+        </div>
+        <div class="border-l border-white/10 pl-2">
+          <div class="text-[10px] mono text-slate-400 uppercase">16× SUB-VOXEL GRID</div>
+          <div id="hud-chunk" class="mono text-xs font-bold text-cyan-300 truncate">80×160 (12,800 CELLS)</div>
+        </div>
+      </div>
+
+      <!-- Location Preset Selector & Live Nominatim Place Search -->
+      <div class="flex flex-col gap-1.5">
+        <label class="text-[10px] mono text-slate-400 uppercase flex justify-between items-center">
+          <span>REAL-WORLD GIS & LIVE OSM VECTOR INGESTION</span>
+          <button id="btn-fetch-osm" class="text-amber-400 hover:underline font-bold" title="Force re-fetch live OpenStreetMap Overpass vectors for this chunk">↻ RE-SYNC OSM</button>
+        </label>
+        <div class="flex gap-1.5">
+          <select id="preset-select" class="w-full bg-slate-900/90 text-xs mono text-slate-100 rounded-lg px-2.5 py-1.5 border border-white/15 focus:outline-none focus:border-amber-400">
+            <option value="42.9906,-82.7649,Downtown Emmett, MI — M-19 & Brandon Rd,EMMETT" selected>Emmett, MI — Downtown M-19 & Brandon Rd (42.9906°N, 82.7649°W)</option>
+            <option value="42.8967,-82.7688,Memphis, MI — M-19 & Black River Bridge,MEMPHIS">Memphis, MI — M-19 & Black River (42.8967°N, 82.7688°W)</option>
+            <option value="42.3314,-83.0458,Detroit, MI — Woodward & Campus Martius,URBAN">Detroit, MI — Woodward Corridor (42.3314°N, 83.0458°W)</option>
+            <option value="47.6101,-122.3344,Seattle, WA — Pike St & 4th Ave,URBAN">Seattle, WA — Pike & 4th Ave (47.6101°N, 122.3344°W)</option>
+            <option value="35.6595,139.7004,Tokyo — Shibuya Scramble,DENSE">Tokyo — Shibuya Crossing (35.6595°N, 139.7004°E)</option>
+          </select>
+          <button id="btn-custom-gps" class="hud-btn bg-slate-800 hover:bg-slate-700 text-[11px] mono px-2.5 py-1.5 rounded-lg border border-white/15 shrink-0 text-amber-300 font-bold" title="Search any town, street address, or Lat/Lon">
+            SEARCH
+          </button>
+        </div>
+
+        <!-- Live Nominatim Place Search & Custom Lat/Lon Drawer -->
+        <div id="custom-gps-drawer" class="mt-1.5 pt-2 border-t border-white/10 flex flex-col gap-1.5">
+          <div class="flex gap-1.5">
+            <input id="input-place-search" type="text" placeholder="Type any town or address (e.g. Yale MI, Capac MI)..." class="w-full bg-black/60 text-xs mono px-2.5 py-1 rounded border border-white/15 text-white focus:outline-none focus:border-amber-400" />
+            <button id="btn-search-place" class="hud-btn bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs mono px-2.5 py-1 rounded shrink-0">FIND</button>
+          </div>
+          <div class="flex gap-1.5 items-center">
+            <input id="input-lat" type="number" step="0.0001" placeholder="Lat" class="w-1/2 bg-black/60 text-xs mono px-2 py-1 rounded border border-white/15 text-white" value="42.9906" />
+            <input id="input-lon" type="number" step="0.0001" placeholder="Lon" class="w-1/2 bg-black/60 text-xs mono px-2 py-1 rounded border border-white/15 text-white" value="-82.7649" />
+            <button id="btn-go-gps" class="hud-btn bg-amber-500 text-slate-950 font-bold text-xs mono px-2.5 py-1 rounded shrink-0">GPS DROP</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Steering Mode Switcher & Live Key Press Telemetry -->
+    <div class="hud-panel rounded-xl px-3 py-2 flex flex-col gap-1.5 text-[11px] mono text-slate-300">
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-[10px] text-slate-400 uppercase font-bold">STEERING MODE:</span>
+        <div class="flex items-center gap-1.5">
+          <button id="btn-steer-mode" class="hud-btn px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold text-[10px]">
+            SCREEN-SPACE (DIRECT WASD)
+          </button>
+          <label class="flex items-center gap-1 text-[10px] text-slate-400 cursor-pointer select-none" title="Flip Left/Right turning in Bike-Relative mode">
+            <input id="chk-invert-steer" type="checkbox" class="accent-amber-400 rounded" />
+            <span>INV A/D</span>
+          </label>
+        </div>
+      </div>
+      <div class="flex items-center justify-between pt-1 border-t border-white/10">
+        <div class="flex items-center gap-1">
+          <span id="key-w" class="px-1.5 py-0.5 rounded bg-slate-800 border border-white/10 text-[10px] font-bold">W ▲</span>
+          <span id="key-a" class="px-1.5 py-0.5 rounded bg-slate-800 border border-white/10 text-[10px] font-bold">A ◀</span>
+          <span id="key-s" class="px-1.5 py-0.5 rounded bg-slate-800 border border-white/10 text-[10px] font-bold">S ▼</span>
+          <span id="key-d" class="px-1.5 py-0.5 rounded bg-slate-800 border border-white/10 text-[10px] font-bold">D ▶</span>
+          <span id="key-space" class="px-2 py-0.5 rounded bg-slate-800 border border-white/10 text-[10px] font-bold">SPACE DRIFT</span>
+        </div>
+        <span class="text-[10px] text-cyan-300 hidden sm:inline">R-DRAG: ORBIT</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM-LEFT HUD: Partner Loadout + Tilt-Shift & Flow-Field Controls -->
+  <div class="fixed bottom-3 left-3 z-20 flex flex-col gap-2 max-w-xs sm:max-w-sm w-[92vw] sm:w-auto">
+    <div class="hud-panel rounded-xl p-3">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-[10px] mono uppercase tracking-wider text-slate-400 font-semibold">PILLION PARTNER LOADOUT (12FPS CHIBI)</span>
+        <button id="btn-aim-mode" class="hud-btn text-[10px] mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+          AIM: AUTO + CURSOR
+        </button>
+      </div>
+
+      <!-- 3 Weapons -->
+      <div class="grid grid-cols-3 gap-1.5 mb-3">
+        <button data-weapon="0" class="weapon-btn hud-btn weapon-active rounded-lg p-2 border border-white/10 text-left">
+          <div class="text-[10px] mono font-bold">[1] SHOTGUN</div>
+          <div class="text-[9px] text-slate-400">Heavy Spread</div>
+        </button>
+        <button data-weapon="1" class="weapon-btn hud-btn rounded-lg p-2 border border-white/10 text-left bg-slate-900/60">
+          <div class="text-[10px] mono font-bold">[2] TESLA SMG</div>
+          <div class="text-[9px] text-slate-400">Rapid Arc</div>
+        </button>
+        <button data-weapon="2" class="weapon-btn hud-btn rounded-lg p-2 border border-white/10 text-left bg-slate-900/60">
+          <div class="text-[10px] mono font-bold">[3] BIO-FLARE</div>
+          <div class="text-[9px] text-slate-400">Blast Crater</div>
+        </button>
+      </div>
+
+      <!-- Tilt-Shift DoF & Camera Pitch Sliders -->
+      <div class="grid grid-cols-2 gap-2 pt-2 border-t border-white/10 text-[10px] mono">
+        <div>
+          <div class="flex justify-between text-slate-400 mb-0.5">
+            <span>TILT-SHIFT DOF</span>
+            <span>BLUR</span>
+          </div>
+          <input id="slider-dof" type="range" min="0" max="14" step="1" value="6" class="w-full h-1.5 bg-slate-800 rounded-lg cursor-pointer" />
+        </div>
+        <div>
+          <div class="flex justify-between text-slate-400 mb-0.5">
+            <span>LENS PITCH</span>
+            <span>ANGLE</span>
+          </div>
+          <input id="slider-pitch" type="range" min="35" max="62" step="1" value="48" class="w-full h-1.5 bg-slate-800 rounded-lg cursor-pointer" />
+        </div>
+      </div>
+
+      <!-- Flow-Field Debug & Time of Day Toggles -->
+      <div class="flex gap-1.5 mt-2.5 pt-2 border-t border-white/10">
+        <button id="btn-flow-debug" class="hud-btn flex-1 text-[10px] mono py-1 px-2 rounded bg-slate-800/90 border border-white/10 text-cyan-300 font-semibold">
+          ⊞ 16× FLOW FIELD: OFF
+        </button>
+        <button id="btn-map-layer" class="hud-btn flex-1 text-[10px] mono py-1 px-2 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-semibold">
+          🗺 MAP BASE: ON
+        </button>
+        <button id="btn-time" class="hud-btn flex-1 text-[10px] mono py-1 px-2 rounded bg-slate-800/90 border border-white/10 text-amber-300 font-semibold">
+          ☀ GOLDEN
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOP-RIGHT HUD: Scrambler Hull, Fuel, Scrap & Horde Counter -->
+  <div class="fixed top-3 right-3 z-20 flex flex-col gap-2 w-64 sm:w-72">
+    <div class="hud-panel rounded-xl p-3.5">
+      <div class="flex justify-between items-center mb-1">
+        <span class="text-[10px] mono text-slate-400 uppercase">SCRAMBLER HULL</span>
+        <span id="hud-hp-text" class="text-xs mono font-bold text-emerald-400">100%</span>
+      </div>
+      <div class="w-full h-2 bg-slate-900 rounded-full overflow-hidden mb-2.5 border border-white/10">
+        <div id="hud-hp-bar" class="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-150" style="width: 100%"></div>
+      </div>
+
+      <div class="flex justify-between items-center mb-1">
+        <span class="text-[10px] mono text-slate-400 uppercase">BIO-ETHANOL FUEL</span>
+        <span id="hud-fuel-text" class="text-xs mono font-bold text-amber-400">100%</span>
+      </div>
+      <div class="w-full h-2 bg-slate-900 rounded-full overflow-hidden mb-3 border border-white/10">
+        <div id="hud-fuel-bar" class="h-full bg-gradient-to-r from-amber-500 to-yellow-300 transition-all duration-150" style="width: 100%"></div>
+      </div>
+
+      <div class="grid grid-cols-3 gap-1.5 text-center bg-black/40 p-2 rounded-lg border border-white/5">
+        <div>
+          <div class="text-[9px] mono text-slate-400">BLOCKS</div>
+          <div id="hud-blocks" class="text-sm mono font-extrabold text-white">1</div>
+        </div>
+        <div class="border-x border-white/10">
+          <div class="text-[9px] mono text-slate-400">ZOMBIES</div>
+          <div id="hud-kills" class="text-sm mono font-extrabold text-rose-400">0</div>
+        </div>
+        <div>
+          <div class="text-[9px] mono text-slate-400">SCRAP ⚙</div>
+          <div id="hud-scrap" class="text-sm mono font-extrabold text-amber-300">25</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM-RIGHT HUD: 20x40 Tactile Maquette Radar & Real-World GIS Vector Inspector -->
+  <div class="fixed bottom-3 right-3 z-20 flex flex-col gap-2">
+    <div class="hud-panel rounded-xl p-3 flex items-center gap-3">
+      <div class="flex flex-col justify-between h-40 w-28">
+        <div>
+          <div class="text-[9px] mono text-slate-400 uppercase">VELOCITY</div>
+          <div class="flex items-baseline gap-1">
+            <span id="hud-speed" class="text-2xl mono font-extrabold text-white">0</span>
+            <span class="text-[10px] mono text-slate-400">KM/H</span>
+          </div>
+          <div id="hud-drift-badge" class="mt-1 text-[9px] mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 inline-block truncate max-w-full">
+            TRACTION NOMINAL
+          </div>
+        </div>
+
+        <div class="border-t border-white/10 pt-1.5">
+          <div class="text-[9px] mono text-amber-300 uppercase font-bold truncate" id="radar-poi-label">M-19 & BRANDON RD</div>
+          <div class="text-[9px] mono text-slate-400 leading-tight mt-0.5">
+            Drive off N/S/E/W edge to load next real GPS block
+          </div>
+          <button id="btn-repair" class="mt-1.5 w-full hud-btn bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-200 text-[10px] mono py-1 rounded font-bold">
+            [R] PATCH (15⚙)
+          </button>
+        </div>
+      </div>
+
+      <!-- Live 20x40 Mini-Radar + GIS Vector Footprint Inspector Canvas -->
+      <div class="relative flex flex-col items-center">
+        <div class="text-[8px] mono text-amber-400 font-bold mb-0.5 flex items-center gap-1">
+          <span>N ▲</span>
+          <span class="text-slate-400">• 16× GIS RADAR</span>
+        </div>
+        <div class="relative rounded-lg overflow-hidden border border-white/20 bg-slate-950 shadow-inner">
+          <canvas id="radar-canvas" width="100" height="160" class="block"></canvas>
+        </div>
+        <div class="text-[8px] mono text-cyan-300 mt-0.5" id="radar-source-tag">80×160 LIVE OSM</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3D Floating GIS Labels Overlay Container -->
+  <div id="gis-labels-container" class="fixed inset-0 pointer-events-none z-10 overflow-hidden"></div>
+
+  <script>
+    // ============================================================================
+    // 1. CORE ARCHITECTURAL CONSTANTS: 16x VOXEL MULTIPLIER (80x160 SUB-VOXEL GRID)
+    // ============================================================================
+    // Each of the 20x40 macro squares is subdivided into 4x4 = 16 land/building cubes!
+    // Total grid resolution: 80 x 160 = 12,800 surface cells per diorama block.
+    // We also scale the physical world footprint so the chibi humans & zombies keep
+    // their exact 1:1 miniature scale while streets, sidewalks, rails, and buildings
+    // have 16x finer architectural detail and true-to-map proportions.
+    const MACRO_W = 20;
+    const MACRO_L = 40;
+    const SUB_DIV = 4;                         // 4x4 = 16 cubes per macro square
+    const GRID_W = MACRO_W * SUB_DIV;          // 80 cells wide (West-to-East)
+    const GRID_L = MACRO_L * SUB_DIV;          // 160 cells long (North-to-South)
+    const GRID_H = 64;                         // 64 vertical sub-voxel levels
+    const VOXEL_SIZE = 0.45;                   // Each micro-cube is 0.45 world units (chibi rider is ~1.1 units tall)
+    const WORLD_W = GRID_W * VOXEL_SIZE;       // 36.0 world units wide
+    const WORLD_L = GRID_L * VOXEL_SIZE;       // 72.0 world units long
+    const HALF_W = WORLD_W / 2;                // 18.0
+    const HALF_L = WORLD_L / 2;                // 36.0
+
+    // Real-World Geographic Bounding Box per 80x160 Diorama Chunk (~110m E-W by ~220m N-S)
+    const CHUNK_LAT_SPAN = 0.00198; // ~220 meters North-South
+    const CHUNK_LON_SPAN = 0.00136; // ~110 meters East-West at 43°N
+
+    // Seeded Mulberry32 PRNG for 100% deterministic Earth chunks
+    function mulberry32(a) {
+      return function() {
+        let t = a += 0x6D2B79F5;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function hashCoords(lat, lon, cx, cz) {
+      const s = `${lat.toFixed(4)}_${lon.toFixed(4)}_${cx}_${cz}`;
+      let h = 2166136261 >>> 0;
+      for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return h >>> 0;
+    }
+
+    // Tile Types on the 80x160 (12,800-cell) Surface Grid
+    const TILE_ROAD = 0;
+    const TILE_SIDEWALK = 1;
+    const TILE_BUILDING = 2;
+    const TILE_RUBBLE = 3;
+    const TILE_WATER = 4;
+    const TILE_TOXIC = 5;
+    const TILE_BRIDGE = 6;
+    const TILE_RAIL = 7;
+    const TILE_FIELD = 8;
+    const TILE_PARKING = 9;
+
+    // ============================================================================
+    // 2. VERIFIED 16x HIGH-RES GIS FOOTPRINTS (DOWNTOWN EMMETT, MI 42.9906, -82.7649)
+    // ============================================================================
+    // Coordinates mapped in 80x160 sub-voxel space (4x resolution in X and Z = 16x cubes)
+    const EMMETT_GIS_CHUNK_0_0 = {
+      banner: "EMMETT, MI • M-19 (MAIN ST) & BRANDON RD",
+      poiLabel: "M-19 / CN RAILROAD",
+      roads: [
+        { name: "Main St (M-19)", points: [[40, 0], [40, 159]], halfWidth: 5.5, primary: true },
+        { name: "Brandon Rd (Co Rd)", points: [[0, 68], [79, 68]], halfWidth: 4.0, primary: false },
+        { name: "Pine St", points: [[0, 24], [79, 24]], halfWidth: 3.0, primary: false },
+        { name: "prospect St", points: [[0, 102], [40, 102]], halfWidth: 2.8, primary: false }
+      ],
+      railways: [
+        { name: "CN / Grand Trunk Western RR", points: [[0, 118], [79, 126]] }
+      ],
+      buildings: [
+        // Our Lady of Mount Carmel Catholic Church, Rectory & School (NW of Main & Brandon)
+        { name: "Our Lady of Mt Carmel Church", x0: 10, z0: 32, x1: 26, z1: 52, height: 22, color: 0x9a3412, roofColor: 0x27272a, steeple: true },
+        { name: "Parish Hall & School", x0: 8, z0: 55, x1: 24, z1: 61, height: 10, color: 0x7c2d12, roofColor: 0x334155 },
+        // Historic Downtown Emmett Brick Storefronts — West Side of Main St (M-19)
+        { name: "Emmett Tavern & Grill (3119 Main)", x0: 24, z0: 75, x1: 32, z1: 86, height: 11, color: 0x7c2d12, roofColor: 0x1e293b },
+        { name: "Historic Hardware & Feed", x0: 23, z0: 88, x1: 32, z1: 98, height: 12, color: 0x991b1b, roofColor: 0x27272a },
+        { name: "US Post Office — Emmett 48022", x0: 25, z0: 105, x1: 32, z1: 113, height: 8, color: 0x64483a, roofColor: 0x475569 },
+        // Downtown Commercial Block — East Side of Main St (M-19)
+        { name: "Emmett Village Hall & Fire Dept", x0: 48, z0: 34, x1: 62, z1: 48, height: 11, color: 0x475569, roofColor: 0x991b1b },
+        { name: "Main St Market & Pharmacy", x0: 48, z0: 75, x1: 58, z1: 92, height: 10, color: 0x64483a, roofColor: 0x1e293b },
+        { name: "St. Clair Co Garage", x0: 49, z0: 95, x1: 64, z1: 108, height: 9, color: 0x52525b, roofColor: 0x3f3f46 },
+        // Emmett Grain Elevator & Agri-Silos Complex along CN Railroad tracks (South end)
+        { name: "Emmett Grain Elevator & Silos", x0: 10, z0: 126, x1: 28, z1: 148, height: 28, color: 0x64748b, roofColor: 0x475569, silo: true },
+        { name: "CN Railroad Freight Depot", x0: 49, z0: 129, x1: 68, z1: 142, height: 9, color: 0x52525b, roofColor: 0x27272a }
+      ]
+    };
+
+    // ============================================================================
+    // 3. GLOBAL GAME STATE
+    // ============================================================================
+    const state = {
+      baseLat: 42.9906,
+      baseLon: -82.7649,
+      locationName: "Downtown Emmett, MI — M-19 & Brandon Rd",
+      biomeHint: "EMMETT",
+      chunkX: 0,
+      chunkZ: 0,
+      blocksTraversed: 1,
+      kills: 0,
+      scrap: 25,
+      osmCache: new Map(), // key: "cx_cz_lat_lon" -> parsed OSM vectors
+      activePins: [],      // 3D floating GIS street/building labels
+      showMapLayer: true,
+
+      // Steering Control Mode: 'SCREEN' (Direct Isometric WASD - Default) or 'BIKE' (Vehicle-Relative)
+      steerMode: 'SCREEN',
+      invertAD: false,
+
+      // 16x High-Density Grid & Flow-Field Buffers (80 x 160 = 12,800 cells)
+      surfaceGrid: new Uint8Array(GRID_W * GRID_L),
+      heightGrid: new Uint8Array(GRID_W * GRID_L),
+      flowDistance: new Float32Array(GRID_W * GRID_L),
+      flowDirX: new Float32Array(GRID_W * GRID_L),
+      flowDirZ: new Float32Array(GRID_W * GRID_L),
+      showFlowDebug: false,
+
+      // Camera & Lighting
+      cameraPitchDeg: 48,
+      cameraYawOffset: 0,
+      cameraZoom: 78,
+      timeOfDayIndex: 0,
+
+      // Two-Seater Motorcycle Physics State
+      bike: {
+        x: 0.5,
+        y: 0.2,
+        z: 6.5,
+        vx: 0,
+        vz: 0,
+        speed: 0,
+        heading: 0, // 0 = Facing North (-Z in world space)
+        steerAngle: 0,
+        leanAngle: 0,
+        drifting: false,
+        driftCharge: 0,
+        hp: 100,
+        fuel: 100
+      },
+
+      // Partner Combat State
+      partner: {
+        aimAngle: Math.PI,
+        weaponIndex: 0,
+        lastFireTime: 0,
+        autoAim: true
+      },
+
+      // Chunk slide transition animation
+      transition: {
+        active: false,
+        progress: 1,
+        offsetX: 0,
+        offsetZ: 0
+      },
+
+      // Input state
+      keys: { up: false, down: false, left: false, right: false, space: false },
+      mouseDown: false,
+      rightMouseDown: false,
+      lastMouseX: 0,
+      mouseWorldPos: new THREE.Vector3(0, 0, 0)
+    };
+
+    const WEAPONS = [
+      { name: "SHOTGUN", cooldown: 0.42, pellets: 6, spread: 0.28, speed: 32, damage: 36, color: 0xfbbf24, explosive: false },
+      { name: "TESLA SMG", cooldown: 0.11, pellets: 1, spread: 0.08, speed: 40, damage: 18, color: 0x38bdf8, explosive: false },
+      { name: "BIO-FLARE", cooldown: 0.78, pellets: 1, spread: 0.03, speed: 24, damage: 95, color: 0xf43f5e, explosive: true }
+    ];
+
+    // ============================================================================
+    // 4. THREE.JS SCENE, TELEPHOTO TILT-SHIFT CAMERA & REAL MAP PLANE
+    // ============================================================================
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0c0f17);
+    scene.fog = new THREE.FogExp2(0x0c0f17, 0.0042);
+
+    // Narrow Telephoto FOV (20 deg) placed far back for authentic miniature compression
+    const camera = new THREE.PerspectiveCamera(20, window.innerWidth / window.innerHeight, 5, 320);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    container.appendChild(renderer.domElement);
+
+    // Root Tabletop & Sliding Maquette Groups
+    const tabletopGroup = new THREE.Group();
+    scene.add(tabletopGroup);
+
+    const dioramaRoot = new THREE.Group();
+    scene.add(dioramaRoot);
+
+    const mapTilePlaneGroup = new THREE.Group();
+    dioramaRoot.add(mapTilePlaneGroup);
+
+    const chunkVoxelGroup = new THREE.Group();
+    dioramaRoot.add(chunkVoxelGroup);
+
+    const debugFlowGroup = new THREE.Group();
+    dioramaRoot.add(debugFlowGroup);
+
+    const entitiesGroup = new THREE.Group();
+    dioramaRoot.add(entitiesGroup);
+
+    // Studio Miniature Lighting Setup
+    const ambientLight = new THREE.HemisphereLight(0xffedd5, 0x1e293b, 0.78);
+    scene.add(ambientLight);
+
+    const sunLight = new THREE.DirectionalLight(0xffdfa0, 1.48);
+    sunLight.position.set(36, 62, 32);
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.width = 2048;
+    sunLight.shadow.mapSize.height = 2048;
+    sunLight.shadow.camera.near = 10;
+    sunLight.shadow.camera.far = 175;
+    const d = 40;
+    sunLight.shadow.camera.left = -d;
+    sunLight.shadow.camera.right = d;
+    sunLight.shadow.camera.top = d;
+    sunLight.shadow.camera.bottom = -d;
+    sunLight.shadow.bias = -0.0005;
+    scene.add(sunLight);
+
+    const rimLight = new THREE.DirectionalLight(0x38bdf8, 0.45);
+    rimLight.position.set(-40, 28, -35);
+    scene.add(rimLight);
+
+    let liveMapPlaneMesh = null;
+
+    // Build Sleek Architectural Tabletop Pedestal + Real Cartographic Map Underlay Plane
+    function buildTabletopPedestal() {
+      const tableGeo = new THREE.BoxGeometry(200, 2, 240);
+      const tableMat = new THREE.MeshStandardMaterial({
+        color: 0x090b10,
+        roughness: 0.85,
+        metalness: 0.15
+      });
+      const tableMesh = new THREE.Mesh(tableGeo, tableMat);
+      tableMesh.position.y = -3.8;
+      tableMesh.receiveShadow = true;
+      tabletopGroup.add(tableMesh);
+
+      // Brass/Amber museum frame rim around the 80x160 sub-voxel maquette base
+      const frameGeo = new THREE.BoxGeometry(WORLD_W + 1.2, 0.8, WORLD_L + 1.2);
+      const frameMat = new THREE.MeshStandardMaterial({
+        color: 0x27272a,
+        roughness: 0.4,
+        metalness: 0.6
+      });
+      const frameMesh = new THREE.Mesh(frameGeo, frameMat);
+      frameMesh.position.y = -2.35;
+      frameMesh.receiveShadow = true;
+      dioramaRoot.add(frameMesh);
+
+      // Real-World Carto/OSM Slippy Map Underlay Plane at y = -0.04
+      const mapPlaneGeo = new THREE.PlaneGeometry(WORLD_W, WORLD_L);
+      mapPlaneGeo.rotateX(-Math.PI / 2);
+      const mapPlaneMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.92
+      });
+      liveMapPlaneMesh = new THREE.Mesh(mapPlaneGeo, mapPlaneMat);
+      liveMapPlaneMesh.position.y = -0.03;
+      mapTilePlaneGroup.add(liveMapPlaneMesh);
+    }
+    buildTabletopPedestal();
+
+    // Render Real Slippy Map Tiles (OSM / Carto Dark-Matter + Vector Blueprint) onto the 3D Map Base Plane
+    function updateRealMapUnderlayTexture() {
+      if (!liveMapPlaneMesh) return;
+      const { curLat, curLon } = getCurrentChunkLatLon();
+      const zoom = 18;
+      const n = Math.pow(2, zoom);
+      const latRad = curLat * Math.PI / 180;
+      const centerTileX = ((curLon + 180) / 360) * n;
+      const centerTileY = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
+
+      const baseTileX = Math.floor(centerTileX);
+      const baseTileY = Math.floor(centerTileY);
+
+      const mapCanvas = document.createElement('canvas');
+      mapCanvas.width = 512;
+      mapCanvas.height = 1024;
+      const ctx = mapCanvas.getContext('2d');
+
+      // Dark blueprint base with fine 80x160 cadastral survey grid
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, 512, 1024);
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
+      ctx.lineWidth = 1;
+      for (let x = 0; x <= 512; x += 512 / 20) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 1024); ctx.stroke();
+      }
+      for (let y = 0; y <= 1024; y += 1024 / 40) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(512, y); ctx.stroke();
+      }
+
+      const tex = new THREE.CanvasTexture(mapCanvas);
+      tex.anisotropy = 4;
+      liveMapPlaneMesh.material.map = tex;
+      liveMapPlaneMesh.material.needsUpdate = true;
+
+      // Asynchronously load real OpenStreetMap Carto tiles around centerTileX, centerTileY
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const tx = baseTileX + dx;
+          const ty = baseTileY + dy;
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            const offsetX = 256 + (tx - centerTileX) * 256;
+            const offsetY = 512 + (ty - centerTileY) * 256;
+            ctx.globalAlpha = 0.85;
+            ctx.filter = 'contrast(1.18) saturate(0.85) brightness(0.75)';
+            ctx.drawImage(img, offsetX, offsetY, 256, 256);
+            tex.needsUpdate = true;
+          };
+          img.src = `https://a.basemaps.cartocdn.com/rastertiles/voyager/${zoom}/${tx}/${ty}.png`;
+        }
+      }
+    }
+
+    // ============================================================================
+    // 5. 16x HIGH-DENSITY (80x160) PROCEDURAL DYSTOPIA & LIVE OSM VOXEL BUILDER
+    // ============================================================================
+    const dummy = new THREE.Object3D();
+    const tempColor = new THREE.Color();
+
+    function idx(gx, gz) {
+      return gz * GRID_W + gx;
+    }
+
+    function worldToGrid(wx, wz) {
+      const gx = Math.floor((wx + HALF_W) / VOXEL_SIZE);
+      const gz = Math.floor((wz + HALF_L) / VOXEL_SIZE);
+      return {
+        gx: Math.max(0, Math.min(GRID_W - 1, gx)),
+        gz: Math.max(0, Math.min(GRID_L - 1, gz))
+      };
+    }
+
+    function gridToWorld(gx, gz) {
+      return {
+        wx: (gx + 0.5) * VOXEL_SIZE - HALF_W,
+        wz: (gz + 0.5) * VOXEL_SIZE - HALF_L
+      };
+    }
+
+    // Helper: Distance from point (px, pz) to line segment (x1,z1)-(x2,z2)
+    function distToSegment(px, pz, x1, z1, x2, z2) {
+      const l2 = (x2 - x1) * (x2 - x1) + (z2 - z1) * (z2 - z1);
+      if (l2 === 0) return Math.hypot(px - x1, pz - z1);
+      let t = ((px - x1) * (x2 - x1) + (pz - z1) * (z2 - z1)) / l2;
+      t = Math.max(0, Math.min(1, t));
+      return Math.hypot(px - (x1 + t * (x2 - x1)), pz - (z1 + t * (z2 - z1)));
+    }
+
+    // Helper: Point-in-polygon check for real OSM building footprints
+    function pointInPolygon(px, pz, poly) {
+      let inside = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i][0], zi = poly[i][1];
+        const xj = poly[j][0], zj = poly[j][1];
+        const intersect = ((zi > pz) !== (zj > pz)) &&
+          (px < (xj - xi) * (pz - zi) / ((zj - zi) || 1e-7) + xi);
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    }
+
+    // Current Chunk's Real-World Center Latitude & Longitude
+    function getCurrentChunkLatLon() {
+      const curLat = state.baseLat - state.chunkZ * CHUNK_LAT_SPAN;
+      const curLon = state.baseLon + state.chunkX * CHUNK_LON_SPAN;
+      return { curLat, curLon };
+    }
+
+    // Rebuild 3D Floating GIS Labels in DOM
+    function rebuildGISFloatingLabels() {
+      const containerEl = document.getElementById('gis-labels-container');
+      containerEl.innerHTML = '';
+      state.activePins.forEach((pin, i) => {
+        const el = document.createElement('div');
+        el.id = `gis-pin-${i}`;
+        el.className = pin.type === 'road'
+          ? 'absolute px-1.5 py-0.5 rounded bg-slate-950/85 border border-amber-400/50 text-amber-300 mono text-[9px] font-bold tracking-wider uppercase shadow-md whitespace-nowrap transition-opacity duration-150'
+          : 'absolute px-1.5 py-0.5 rounded bg-slate-900/80 border border-cyan-400/40 text-cyan-200 mono text-[8px] font-semibold shadow-md whitespace-nowrap transition-opacity duration-150';
+        el.textContent = pin.label;
+        containerEl.appendChild(el);
+        pin.el = el;
+      });
+    }
+
+    function updateGISFloatingLabelsScreenPos() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const tempV = new THREE.Vector3();
+      state.activePins.forEach(pin => {
+        if (!pin.el) return;
+        tempV.set(pin.wx, pin.wy, pin.wz);
+        tempV.project(camera);
+        if (tempV.z > 1) {
+          pin.el.style.opacity = '0';
+          return;
+        }
+        const sx = (tempV.x * 0.5 + 0.5) * w;
+        const sy = (-tempV.y * 0.5 + 0.5) * h;
+        pin.el.style.left = `${sx}px`;
+        pin.el.style.top = `${sy}px`;
+        pin.el.style.transform = 'translate(-50%, -100%)';
+        pin.el.style.opacity = state.showMapLayer ? '0.92' : '0';
+      });
+    }
+
+    // Generate the 80x160 (16x Sub-Voxel Density) Diorama Block
+    function generateDioramaChunk(liveOsmData = null) {
+      while (chunkVoxelGroup.children.length > 0) {
+        const obj = chunkVoxelGroup.children.pop();
+        if (obj.geometry) obj.geometry.dispose();
+      }
+      state.activePins = [];
+
+      const { curLat, curLon } = getCurrentChunkLatLon();
+      const seed = hashCoords(state.baseLat, state.baseLon, state.chunkX, state.chunkZ);
+      const rng = mulberry32(seed);
+
+      // Update GPS HUD & Real Map Tile Underlay
+      const latDir = curLat >= 0 ? 'N' : 'S';
+      const lonDir = curLon >= 0 ? 'E' : 'W';
+      document.getElementById('hud-latlon').textContent =
+        `${Math.abs(curLat).toFixed(4)}°${latDir}, ${Math.abs(curLon).toFixed(4)}°${lonDir}`;
+
+      updateRealMapUnderlayTexture();
+
+      const isEmmettOrigin =
+        Math.abs(curLat - 42.9906) < 0.0055 &&
+        Math.abs(curLon - (-82.7649)) < 0.0055;
+
+      const solidVoxels = [];
+      const glassVoxels = [];
+
+      // 1. Subterranean Cross-Section Rim around the 80x160 Maquette Perimeter
+      for (let gz = 0; gz < GRID_L; gz++) {
+        for (let gx = 0; gx < GRID_W; gx++) {
+          const isEdge = (gx === 0 || gx === GRID_W - 1 || gz === 0 || gz === GRID_L - 1);
+          if (!isEdge) continue;
+          const { wx, wz } = gridToWorld(gx, gz);
+          solidVoxels.push({ x: wx, y: -1.65, z: wz, sx: VOXEL_SIZE, sy: 1.1, sz: VOXEL_SIZE, color: 0x1e222d });
+          const isCulvert = (gz === 0 || gz === GRID_L - 1) && (gx >= 38 && gx <= 41);
+          if (!isCulvert) {
+            solidVoxels.push({ x: wx, y: -0.75, z: wz, sx: VOXEL_SIZE, sy: 0.85, sz: VOXEL_SIZE, color: 0x3b2d26 });
+          } else {
+            glassVoxels.push({ x: wx, y: -0.95, z: wz, sx: VOXEL_SIZE, sy: 0.35, sz: VOXEL_SIZE, color: 0x4ade80 });
+          }
+        }
+      }
+
+      // Initialize 80x160 Surface Grid
+      state.surfaceGrid.fill(isEmmettOrigin ? TILE_FIELD : TILE_SIDEWALK);
+      state.heightGrid.fill(0);
+
+      // Helper to extrude a hollow, dystopian-weathered building shell at 16x sub-voxel resolution
+      function extrude16xBuildingCell(gx, gz, isWall, isCorner, colH, baseColor, roofColor) {
+        const { wx, wz } = gridToWorld(gx, gz);
+        for (let y = 1; y <= colH; y++) {
+          // Hollow out interior voxels except roof & floor plates for GPU speed
+          if (!isWall && y < colH) continue;
+
+          const vy = (y - 0.5) * VOXEL_SIZE;
+          const isWindowRow = (y > 2 && y < colH - 1 && y % 3 === 0);
+          const isWindowCol = !isCorner && ((gx + gz) % 2 === 0);
+
+          if (isWall && isWindowRow && isWindowCol) {
+            if (rng() < 0.22) {
+              glassVoxels.push({
+                x: wx, y: vy, z: wz,
+                sx: VOXEL_SIZE * 0.8, sy: VOXEL_SIZE * 0.8, sz: VOXEL_SIZE * 0.8,
+                color: 0xfde047
+              });
+            }
+            continue;
+          }
+
+          let c = baseColor;
+          if (isCorner) c = 0x334155; // Architectural quoin / pilaster trim
+          if (y === 1) c = 0x27272a;  // Stone foundation course
+          if (y === colH) {
+            c = rng() < 0.38 ? 0x3f6212 : (roofColor || 0x1e293b); // Dystopian moss or parapet cap
+          }
+          solidVoxels.push({
+            x: wx, y: vy, z: wz,
+            sx: VOXEL_SIZE, sy: VOXEL_SIZE, sz: VOXEL_SIZE,
+            color: c
+          });
+        }
+      }
+
+      // =========================================================================
+      // BRANCH A: LIVE OPENSTREETMAP VECTOR RASTERIZATION ON 80x160 GRID (16x DENSITY)
+      // =========================================================================
+      const cachedOsm = liveOsmData || state.osmCache.get(`${state.chunkX}_${state.chunkZ}_${state.baseLat.toFixed(4)}`);
+
+      if (cachedOsm && (cachedOsm.roads.length > 0 || cachedOsm.buildings.length > 0 || cachedOsm.railways.length > 0)) {
+        document.getElementById('hud-chunk').textContent = `80×160 [${state.chunkX},${state.chunkZ}] • LIVE OSM`;
+        document.getElementById('radar-source-tag').textContent = `16× OSM (${cachedOsm.buildings.length}B/${cachedOsm.roads.length}R)`;
+
+        if (cachedOsm.streetNames.length > 0) {
+          const topNames = cachedOsm.streetNames.slice(0, 3).join(' • ');
+          document.getElementById('hud-street-banner').textContent = topNames.toUpperCase();
+          document.getElementById('radar-poi-label').textContent = cachedOsm.streetNames[0].toUpperCase();
+        }
+
+        // 1. Rasterize Real OSM Waterways
+        cachedOsm.waterways.forEach(way => {
+          for (let i = 0; i < way.points.length - 1; i++) {
+            const [x1, z1] = way.points[i];
+            const [x2, z2] = way.points[i + 1];
+            for (let gz = 0; gz < GRID_L; gz++) {
+              for (let gx = 0; gx < GRID_W; gx++) {
+                if (distToSegment(gx + 0.5, gz + 0.5, x1, z1, x2, z2) <= 5.5) {
+                  state.surfaceGrid[idx(gx, gz)] = TILE_WATER;
+                }
+              }
+            }
+          }
+        });
+
+        // 2. Rasterize Real OSM Roads & Sidewalks at 16x Sub-Voxel Precision
+        const pinnedRoadNames = new Set();
+        cachedOsm.roads.forEach(road => {
+          for (let i = 0; i < road.points.length - 1; i++) {
+            const [x1, z1] = road.points[i];
+            const [x2, z2] = road.points[i + 1];
+            const minX = Math.max(0, Math.floor(Math.min(x1, x2) - road.halfWidth - 3));
+            const maxX = Math.min(GRID_W - 1, Math.ceil(Math.max(x1, x2) + road.halfWidth + 3));
+            const minZ = Math.max(0, Math.floor(Math.min(z1, z2) - road.halfWidth - 3));
+            const maxZ = Math.min(GRID_L - 1, Math.ceil(Math.max(z1, z2) + road.halfWidth + 3));
+
+            for (let gz = minZ; gz <= maxZ; gz++) {
+              for (let gx = minX; gx <= maxX; gx++) {
+                const d = distToSegment(gx + 0.5, gz + 0.5, x1, z1, x2, z2);
+                const cIdx = idx(gx, gz);
+                if (d <= road.halfWidth) {
+                  state.surfaceGrid[cIdx] = state.surfaceGrid[cIdx] === TILE_WATER ? TILE_BRIDGE : TILE_ROAD;
+                } else if (d <= road.halfWidth + 2.2 && state.surfaceGrid[cIdx] !== TILE_ROAD && state.surfaceGrid[cIdx] !== TILE_BRIDGE) {
+                  state.surfaceGrid[cIdx] = TILE_SIDEWALK;
+                }
+              }
+            }
+          }
+
+          if (road.name && !pinnedRoadNames.has(road.name) && road.points.length > 0) {
+            pinnedRoadNames.add(road.name);
+            const midPt = road.points[Math.floor(road.points.length / 2)];
+            if (midPt[0] >= 2 && midPt[0] <= GRID_W - 2 && midPt[1] >= 2 && midPt[1] <= GRID_L - 2) {
+              const { wx, wz } = gridToWorld(midPt[0], midPt[1]);
+              state.activePins.push({ label: `🛣 ${road.name}`, wx, wy: 0.6, wz, type: 'road' });
+            }
+          }
+        });
+
+        // 3. Rasterize Real OSM Railways
+        cachedOsm.railways.forEach(rail => {
+          for (let i = 0; i < rail.points.length - 1; i++) {
+            const [x1, z1] = rail.points[i];
+            const [x2, z2] = rail.points[i + 1];
+            for (let gz = 0; gz < GRID_L; gz++) {
+              for (let gx = 0; gx < GRID_W; gx++) {
+                const d = distToSegment(gx + 0.5, gz + 0.5, x1, z1, x2, z2);
+                if (d <= 2.2) {
+                  state.surfaceGrid[idx(gx, gz)] = TILE_RAIL;
+                } else if (d <= 3.8 && state.surfaceGrid[idx(gx, gz)] === TILE_FIELD) {
+                  state.surfaceGrid[idx(gx, gz)] = TILE_SIDEWALK;
+                }
+              }
+            }
+          }
+          if (rail.points.length > 0) {
+            const midPt = rail.points[Math.floor(rail.points.length / 2)];
+            const { wx, wz } = gridToWorld(
+              Math.max(4, Math.min(GRID_W - 4, midPt[0])),
+              Math.max(4, Math.min(GRID_L - 4, midPt[1]))
+            );
+            state.activePins.push({ label: `🛤 ${rail.name}`, wx, wy: 0.65, wz, type: 'road' });
+          }
+        });
+
+        // 4. Extrude Exact OSM Building Polygons at 80x160 Sub-Voxel Resolution
+        const osmPalette = [0x7c2d12, 0x475569, 0x64483a, 0x991b1b, 0x52525b, 0x334155];
+        cachedOsm.buildings.forEach((bldg, bIdx) => {
+          const baseColor = osmPalette[bIdx % osmPalette.length];
+          const maxH = bldg.levels ? Math.min(48, bldg.levels * 6) : (9 + Math.floor(rng() * 10));
+
+          let minX = GRID_W, maxX = 0, minZ = GRID_L, maxZ = 0;
+          bldg.poly.forEach(([px, pz]) => {
+            if (px < minX) minX = px;
+            if (px > maxX) maxX = px;
+            if (pz < minZ) minZ = pz;
+            if (pz > maxZ) maxZ = pz;
+          });
+          minX = Math.max(1, Math.floor(minX));
+          maxX = Math.min(GRID_W - 2, Math.ceil(maxX));
+          minZ = Math.max(1, Math.floor(minZ));
+          maxZ = Math.min(GRID_L - 2, Math.ceil(maxZ));
+
+          // First mark building footprint cells
+          const footprintCells = [];
+          for (let gz = minZ; gz <= maxZ; gz++) {
+            for (let gx = minX; gx <= maxX; gx++) {
+              if (pointInPolygon(gx + 0.5, gz + 0.5, bldg.poly)) {
+                const cIdx = idx(gx, gz);
+                if (state.surfaceGrid[cIdx] === TILE_ROAD || state.surfaceGrid[cIdx] === TILE_RAIL) continue;
+                state.surfaceGrid[cIdx] = TILE_BUILDING;
+                footprintCells.push([gx, gz]);
+              }
+            }
+          }
+
+          // Extrude perimeter walls & dystopian jagged roof
+          footprintCells.forEach(([gx, gz]) => {
+            const isWall =
+              state.surfaceGrid[idx(gx - 1, gz)] !== TILE_BUILDING ||
+              state.surfaceGrid[idx(gx + 1, gz)] !== TILE_BUILDING ||
+              state.surfaceGrid[idx(gx, gz - 1)] !== TILE_BUILDING ||
+              state.surfaceGrid[idx(gx, gz + 1)] !== TILE_BUILDING;
+            const isCorner = (gx === minX || gx === maxX) && (gz === minZ || gz === maxZ);
+            const craterNoise = Math.sin(gx * 0.35 + gz * 0.25) * 2.5;
+            const colH = Math.max(5, Math.floor(maxH - rng() * 3 + craterNoise));
+            state.heightGrid[idx(gx, gz)] = colH;
+            extrude16xBuildingCell(gx, gz, isWall, isCorner, colH, baseColor, 0x1e293b);
+          });
+
+          if (bldg.name && footprintCells.length > 4) {
+            const [cx, cz] = footprintCells[Math.floor(footprintCells.length / 2)];
+            const { wx, wz } = gridToWorld(cx, cz);
+            state.activePins.push({
+              label: bldg.name,
+              wx,
+              wy: (maxH + 2) * VOXEL_SIZE,
+              wz,
+              type: 'building'
+            });
+          }
+        });
+      }
+
+      // =========================================================================
+      // BRANCH B: VERIFIED DOWNTOWN EMMETT, MI 16x CADASTRAL FOOTPRINT (SUPPLEMENT / DEFAULT)
+      // =========================================================================
+      // Even when live OSM loads in rural Michigan (where some historic storefronts aren't tagged in OSM),
+      // we blend Downtown Emmett's verified cadastral footprints so Main St (M-19), Brandon Rd, CN Railroad,
+      // Our Lady of Mount Carmel Church, and the Emmett Grain Elevator are always 100% present!
+      if (isEmmettOrigin && state.chunkX === 0 && state.chunkZ === 0) {
+        if (!cachedOsm || cachedOsm.buildings.length < 3) {
+          document.getElementById('hud-chunk').textContent = `80×160 EMMETT [0,0] • 16× GIS`;
+          document.getElementById('radar-source-tag').textContent = "16× EMMETT CADASTRAL + OSM";
+          document.getElementById('hud-street-banner').textContent = EMMETT_GIS_CHUNK_0_0.banner;
+          document.getElementById('radar-poi-label').textContent = EMMETT_GIS_CHUNK_0_0.poiLabel;
+
+          // Rasterize Emmett Roads at 80x160 resolution
+          EMMETT_GIS_CHUNK_0_0.roads.forEach(road => {
+            const [p1, p2] = road.points;
+            for (let gz = 0; gz < GRID_L; gz++) {
+              for (let gx = 0; gx < GRID_W; gx++) {
+                const d = distToSegment(gx + 0.5, gz + 0.5, p1[0], p1[1], p2[0], p2[1]);
+                const cIdx = idx(gx, gz);
+                if (d <= road.halfWidth) {
+                  state.surfaceGrid[cIdx] = TILE_ROAD;
+                } else if (d <= road.halfWidth + 2.5 && state.surfaceGrid[cIdx] !== TILE_ROAD) {
+                  state.surfaceGrid[cIdx] = TILE_SIDEWALK;
+                }
+              }
+            }
+            const midX = (p1[0] + p2[0]) / 2;
+            const midZ = (p1[1] + p2[1]) / 2;
+            const { wx, wz } = gridToWorld(midX, midZ);
+            state.activePins.push({ label: `🛣 ${road.name}`, wx, wy: 0.65, wz, type: 'road' });
+          });
+
+          // Rasterize CN / Grand Trunk Western Railroad
+          EMMETT_GIS_CHUNK_0_0.railways.forEach(rail => {
+            const [p1, p2] = rail.points;
+            for (let gz = 0; gz < GRID_L; gz++) {
+              for (let gx = 0; gx < GRID_W; gx++) {
+                const d = distToSegment(gx + 0.5, gz + 0.5, p1[0], p1[1], p2[0], p2[1]);
+                if (d <= 2.2) state.surfaceGrid[idx(gx, gz)] = TILE_RAIL;
+                else if (d <= 4.0 && state.surfaceGrid[idx(gx, gz)] === TILE_FIELD) state.surfaceGrid[idx(gx, gz)] = TILE_SIDEWALK;
+              }
+            }
+            const { wx, wz } = gridToWorld(58, 123);
+            state.activePins.push({ label: `🛤 ${rail.name}`, wx, wy: 0.7, wz, type: 'road' });
+          });
+
+          // Extrude Verified Emmett Landmarks at 16x Sub-Voxel Fidelity
+          EMMETT_GIS_CHUNK_0_0.buildings.forEach(b => {
+            for (let gz = b.z0; gz <= b.z1; gz++) {
+              for (let gx = b.x0; gx <= b.x1; gx++) {
+                const cIdx = idx(gx, gz);
+                if (state.surfaceGrid[cIdx] === TILE_ROAD || state.surfaceGrid[cIdx] === TILE_RAIL) continue;
+                state.surfaceGrid[cIdx] = TILE_BUILDING;
+              }
+            }
+
+            for (let gz = b.z0; gz <= b.z1; gz++) {
+              for (let gx = b.x0; gx <= b.x1; gx++) {
+                const cIdx = idx(gx, gz);
+                if (state.surfaceGrid[cIdx] !== TILE_BUILDING) continue;
+                const isWall = (gx === b.x0 || gx === b.x1 || gz === b.z0 || gz === b.z1);
+                const isCorner = (gx === b.x0 || gx === b.x1) && (gz === b.z0 || gz === b.z1);
+                const colH = Math.max(6, Math.floor(b.height - rng() * 3));
+                state.heightGrid[cIdx] = colH;
+                extrude16xBuildingCell(gx, gz, isWall, isCorner, colH, b.color, b.roofColor);
+              }
+            }
+
+            // Add 16x Sub-Voxel Steeple Spire or Grain Silo Cylinders
+            if (b.steeple) {
+              for (let sy = b.height + 1; sy <= b.height + 16; sy++) {
+                const spireRadius = sy > b.height + 8 ? 0 : 1;
+                for (let dz = -spireRadius; dz <= spireRadius; dz++) {
+                  for (let dx = -spireRadius; dx <= spireRadius; dx++) {
+                    const { wx, wz } = gridToWorld(b.x1 - 2 + dx, b.z1 - 2 + dz);
+                    solidVoxels.push({
+                      x: wx, y: (sy - 0.5) * VOXEL_SIZE, z: wz,
+                      sx: VOXEL_SIZE, sy: VOXEL_SIZE, sz: VOXEL_SIZE,
+                      color: sy > b.height + 10 ? 0xfbbf24 : 0xd6d3d1
+                    });
+                  }
+                }
+              }
+            }
+
+            if (b.silo) {
+              // Twin cylindrical grain silos made of sub-voxels
+              const siloCenters = [ [b.x0 - 3, b.z0 + 4], [b.x0 - 3, b.z0 + 11], [b.x0 - 3, b.z0 + 18] ];
+              siloCenters.forEach(([sx, sz]) => {
+                for (let gz = sz - 2; gz <= sz + 2; gz++) {
+                  for (let gx = sx - 2; gx <= sx + 2; gx++) {
+                    if (Math.hypot(gx - sx, gz - sz) <= 2.3 && gx >= 1 && gz < GRID_L - 1) {
+                      state.surfaceGrid[idx(gx, gz)] = TILE_BUILDING;
+                      const { wx, wz } = gridToWorld(gx, gz);
+                      for (let sy = 1; sy <= b.height + 8; sy++) {
+                        solidVoxels.push({
+                          x: wx, y: (sy - 0.5) * VOXEL_SIZE, z: wz,
+                          sx: VOXEL_SIZE, sy: VOXEL_SIZE, sz: VOXEL_SIZE,
+                          color: sy % 6 === 0 ? 0x64748b : 0x94a3b8
+                        });
+                      }
+                    }
+                  }
+                }
+              });
+            }
+
+            const { wx, wz } = gridToWorld((b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2);
+            state.activePins.push({
+              label: b.name,
+              wx,
+              wy: (b.height + 3) * VOXEL_SIZE,
+              wz,
+              type: 'building'
+            });
+          });
+        }
+      } else if (!cachedOsm || (cachedOsm.roads.length === 0 && cachedOsm.buildings.length === 0)) {
+        // =====================================================================
+        // BRANCH C: 16x HIGH-DENSITY PROCEDURAL FALLBACK WHEN OFFLINE
+        // =====================================================================
+        document.getElementById('hud-chunk').textContent = `80×160 [${state.chunkX},${state.chunkZ}] • 16× SYNTH`;
+        const mainRoadX = 40;
+        const crossRoadZ = 76;
+
+        for (let gz = 0; gz < GRID_L; gz++) {
+          for (let gx = 0; gx < GRID_W; gx++) {
+            const cIdx = idx(gx, gz);
+            const dx = Math.abs(gx - mainRoadX);
+            const dz = Math.abs(gz - crossRoadZ);
+            if (dx <= 5 || dz <= 4) state.surfaceGrid[cIdx] = TILE_ROAD;
+            else if (dx <= 8 || dz <= 7) state.surfaceGrid[cIdx] = TILE_SIDEWALK;
+          }
+        }
+
+        const plots = [
+          { name: "NW Sector Block", x0: 8, x1: 28, z0: 12, z1: 60, h: 22, color: 0x475569 },
+          { name: "NE Sector Tower", x0: 50, x1: 70, z0: 14, z1: 58, h: 28, color: 0x7c2d12 },
+          { name: "SW Logistics Ruin", x0: 10, x1: 29, z0: 90, z1: 142, h: 18, color: 0x52525b },
+          { name: "SE Plaza Ruin", x0: 50, x1: 72, z0: 92, z1: 144, h: 24, color: 0x64483a }
+        ];
+        plots.forEach(b => {
+          for (let gz = b.z0; gz <= b.z1; gz++) {
+            for (let gx = b.x0; gx <= b.x1; gx++) {
+              state.surfaceGrid[idx(gx, gz)] = TILE_BUILDING;
+            }
+          }
+          for (let gz = b.z0; gz <= b.z1; gz++) {
+            for (let gx = b.x0; gx <= b.x1; gx++) {
+              const isWall = (gx === b.x0 || gx === b.x1 || gz === b.z0 || gz === b.z1);
+              const isCorner = (gx === b.x0 || gx === b.x1) && (gz === b.z0 || gz === b.z1);
+              const colH = Math.max(6, Math.floor(b.h - rng() * 5));
+              extrude16xBuildingCell(gx, gz, isWall, isCorner, colH, b.color, 0x1e293b);
+            }
+          }
+        });
+      }
+
+      // 4. Render 80x160 Surface Sub-Voxels (Asphalt, M-19 Stripes, Sidewalk Curbs, Railroad Ties, Pasture)
+      // When the live map base layer is ON, we render slightly recessed/semi-open road & field tiles so
+      // the real cartographic map texture shines through underneath while curbs, rails, and rubble pop in 3D!
+      for (let gz = 0; gz < GRID_L; gz++) {
+        for (let gx = 0; gx < GRID_W; gx++) {
+          const cIdx = idx(gx, gz);
+          const tile = state.surfaceGrid[cIdx];
+          const { wx, wz } = gridToWorld(gx, gz);
+
+          if (tile === TILE_WATER) {
+            solidVoxels.push({ x: wx, y: -0.25, z: wz, sx: VOXEL_SIZE, sy: 0.25, sz: VOXEL_SIZE, color: 0x134e4a });
+            glassVoxels.push({ x: wx, y: -0.08, z: wz, sx: VOXEL_SIZE, sy: 0.12, sz: VOXEL_SIZE, color: 0x2dd4bf });
+          } else if (tile === TILE_BRIDGE) {
+            solidVoxels.push({ x: wx, y: -0.04, z: wz, sx: VOXEL_SIZE, sy: 0.25, sz: VOXEL_SIZE, color: 0x475569 });
+          } else if (tile === TILE_RAIL) {
+            solidVoxels.push({ x: wx, y: -0.06, z: wz, sx: VOXEL_SIZE, sy: 0.20, sz: VOXEL_SIZE, color: 0x57534e });
+            if (gx % 2 === 0) {
+              solidVoxels.push({ x: wx, y: 0.05, z: wz, sx: VOXEL_SIZE * 0.7, sy: 0.08, sz: VOXEL_SIZE * 0.95, color: 0x451a03 });
+            }
+            solidVoxels.push({ x: wx, y: 0.10, z: wz, sx: VOXEL_SIZE, sy: 0.08, sz: VOXEL_SIZE * 0.35, color: 0x94a3b8 });
+          } else if (tile === TILE_ROAD) {
+            const isCenterLine = (gx === 39 || gx === 40) && (gz % 6 < 3);
+            if (isCenterLine) {
+              solidVoxels.push({ x: wx, y: 0.01, z: wz, sx: VOXEL_SIZE * 0.65, sy: 0.06, sz: VOXEL_SIZE, color: 0xf59e0b });
+            } else if (!state.showMapLayer || (gx + gz) % 2 === 0) {
+              const roadColor = ((gx + gz) % 7 === 0) ? 0x1e293b : 0x262f3f;
+              solidVoxels.push({ x: wx, y: -0.10, z: wz, sx: VOXEL_SIZE, sy: 0.16, sz: VOXEL_SIZE, color: roadColor });
+            }
+          } else if (tile === TILE_FIELD) {
+            if (!state.showMapLayer || (gx + gz) % 3 === 0) {
+              const grassTone = ((gx + gz) % 2 === 0) ? 0x2e4c1e : 0x365314;
+              solidVoxels.push({ x: wx, y: -0.08, z: wz, sx: VOXEL_SIZE, sy: 0.20, sz: VOXEL_SIZE, color: grassTone });
+            }
+            if (rng() < 0.018) {
+              state.surfaceGrid[cIdx] = TILE_RUBBLE;
+              solidVoxels.push({
+                x: wx, y: VOXEL_SIZE * 0.6, z: wz,
+                sx: VOXEL_SIZE * 0.95, sy: VOXEL_SIZE * 1.3, sz: VOXEL_SIZE * 0.95,
+                color: 0x3f6212
+              });
+            }
+          } else if (tile === TILE_SIDEWALK || tile === TILE_BUILDING) {
+            solidVoxels.push({ x: wx, y: -0.04, z: wz, sx: VOXEL_SIZE, sy: 0.26, sz: VOXEL_SIZE, color: 0x64748b });
+            if (tile === TILE_SIDEWALK && rng() < 0.025) {
+              state.surfaceGrid[cIdx] = TILE_RUBBLE;
+              state.heightGrid[cIdx] = 1;
+              solidVoxels.push({
+                x: wx, y: VOXEL_SIZE * 0.55, z: wz,
+                sx: VOXEL_SIZE * 0.9, sy: VOXEL_SIZE * 0.9, sz: VOXEL_SIZE * 0.9,
+                color: rng() < 0.5 ? 0x4d7c0f : 0x52525b
+              });
+            }
+          }
+        }
+      }
+
+      // Build InstancedMesh for all 16x Sub-Voxels
+      const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+      const solidMat = new THREE.MeshStandardMaterial({ roughness: 0.78, metalness: 0.12 });
+      const solidInst = new THREE.InstancedMesh(boxGeo, solidMat, solidVoxels.length);
+      solidInst.castShadow = true;
+      solidInst.receiveShadow = true;
+
+      for (let i = 0; i < solidVoxels.length; i++) {
+        const v = solidVoxels[i];
+        dummy.position.set(v.x, v.y, v.z);
+        dummy.scale.set(v.sx, v.sy, v.sz);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        solidInst.setMatrixAt(i, dummy.matrix);
+        tempColor.setHex(v.color);
+        solidInst.setColorAt(i, tempColor);
+      }
+      solidInst.instanceMatrix.needsUpdate = true;
+      if (solidInst.instanceColor) solidInst.instanceColor.needsUpdate = true;
+      chunkVoxelGroup.add(solidInst);
+
+      if (glassVoxels.length > 0) {
+        const glassMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.88 });
+        const glassInst = new THREE.InstancedMesh(boxGeo, glassMat, glassVoxels.length);
+        for (let i = 0; i < glassVoxels.length; i++) {
+          const v = glassVoxels[i];
+          dummy.position.set(v.x, v.y, v.z);
+          dummy.scale.set(v.sx, v.sy, v.sz);
+          dummy.rotation.set(0, 0, 0);
+          dummy.updateMatrix();
+          glassInst.setMatrixAt(i, dummy.matrix);
+          tempColor.setHex(v.color);
+          glassInst.setColorAt(i, tempColor);
+        }
+        glassInst.instanceMatrix.needsUpdate = true;
+        if (glassInst.instanceColor) glassInst.instanceColor.needsUpdate = true;
+        chunkVoxelGroup.add(glassInst);
+      }
+
+      // Ensure bike isn't trapped inside a newly rasterized building
+      const { gx: bgx, gz: bgz } = worldToGrid(state.bike.x, state.bike.z);
+      if (state.surfaceGrid[idx(bgx, bgz)] === TILE_BUILDING) {
+        for (let r = 1; r < 30; r++) {
+          let freed = false;
+          for (let dz = -r; dz <= r && !freed; dz++) {
+            for (let dx = -r; dx <= r && !freed; dx++) {
+              const tx = Math.max(2, Math.min(GRID_W - 3, bgx + dx));
+              const tz = Math.max(2, Math.min(GRID_L - 3, bgz + dz));
+              const t = state.surfaceGrid[idx(tx, tz)];
+              if (t === TILE_ROAD || t === TILE_SIDEWALK) {
+                const { wx, wz } = gridToWorld(tx, tz);
+                state.bike.x = wx;
+                state.bike.z = wz;
+                freed = true;
+              }
+            }
+          }
+          if (freed) break;
+        }
+      }
+
+      rebuildGISFloatingLabels();
+      computeDijkstraFlowField();
+      rebuildFlowDebugOverlay();
+      spawnChunkHordeAndLoot(rng);
+    }
+
+    // ============================================================================
+    // 6. DIJKSTRA 80x160 FLOW-FIELD SOLVER & DEBUG OVERLAY
+    // ============================================================================
+    function computeDijkstraFlowField() {
+      state.flowDistance.fill(9999);
+      state.flowDirX.fill(0);
+      state.flowDirZ.fill(0);
+
+      const { gx: targetX, gz: targetZ } = worldToGrid(state.bike.x, state.bike.z);
+      const startIdx = idx(targetX, targetZ);
+      state.flowDistance[startIdx] = 0;
+
+      const queue = [ [targetX, targetZ] ];
+      let head = 0;
+      const dirs = [ [1,0], [-1,0], [0,1], [0,-1] ];
+
+      while (head < queue.length) {
+        const [cx, cz] = queue[head++];
+        const curDist = state.flowDistance[idx(cx, cz)];
+
+        for (let i = 0; i < 4; i++) {
+          const nx = cx + dirs[i][0];
+          const nz = cz + dirs[i][1];
+          if (nx < 0 || nx >= GRID_W || nz < 0 || nz >= GRID_L) continue;
+          const nIdx = idx(nx, nz);
+          const tile = state.surfaceGrid[nIdx];
+          if (tile === TILE_BUILDING || tile === TILE_WATER) continue;
+
+          const stepCost = (tile === TILE_RUBBLE || tile === TILE_TOXIC) ? 2.4 : 1.0;
+          if (curDist + stepCost < state.flowDistance[nIdx]) {
+            state.flowDistance[nIdx] = curDist + stepCost;
+            queue.push([nx, nz]);
+          }
+        }
+      }
+
+      for (let gz = 0; gz < GRID_L; gz++) {
+        for (let gx = 0; gx < GRID_W; gx++) {
+          const cIdx = idx(gx, gz);
+          if (state.flowDistance[cIdx] >= 9999) continue;
+
+          let bestDx = 0;
+          let bestDz = 0;
+          let minD = state.flowDistance[cIdx];
+
+          for (let dz = -1; dz <= 1; dz++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dz === 0) continue;
+              const nx = gx + dx;
+              const nz = gz + dz;
+              if (nx < 0 || nx >= GRID_W || nz < 0 || nz >= GRID_L) continue;
+              const d = state.flowDistance[idx(nx, nz)];
+              if (d < minD) {
+                minD = d;
+                bestDx = dx;
+                bestDz = dz;
+              }
+            }
+          }
+
+          const len = Math.hypot(bestDx, bestDz) || 1;
+          state.flowDirX[cIdx] = bestDx / len;
+          state.flowDirZ[cIdx] = bestDz / len;
+        }
+      }
+    }
+
+    function rebuildFlowDebugOverlay() {
+      while (debugFlowGroup.children.length > 0) {
+        const c = debugFlowGroup.children.pop();
+        if (c.geometry) c.geometry.dispose();
+      }
+      if (!state.showFlowDebug) return;
+
+      const dotGeo = new THREE.BoxGeometry(0.14, 0.06, 0.34);
+      const dotMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+      const inst = new THREE.InstancedMesh(dotGeo, dotMat, (GRID_W / 2) * (GRID_L / 2));
+      let count = 0;
+
+      for (let gz = 0; gz < GRID_L; gz += 2) {
+        for (let gx = 0; gx < GRID_W; gx += 2) {
+          const cIdx = idx(gx, gz);
+          if (state.flowDistance[cIdx] >= 9999) continue;
+          const { wx, wz } = gridToWorld(gx, gz);
+          dummy.position.set(wx, 0.16, wz);
+          dummy.rotation.set(0, Math.atan2(-state.flowDirX[cIdx], -state.flowDirZ[cIdx]), 0);
+          dummy.scale.set(1, 1, 1);
+          dummy.updateMatrix();
+          inst.setMatrixAt(count++, dummy.matrix);
+        }
+      }
+      inst.count = count;
+      inst.instanceMatrix.needsUpdate = true;
+      debugFlowGroup.add(inst);
+    }
+
+    // ============================================================================
+    // 7. TWO-SEATER SCRAMBLER MOTORCYCLE & 12-FPS CHIBI RIDERS (UNCHANGED 1:1 FIDELITY)
+    // ============================================================================
+    const bikeGroup = new THREE.Group();
+    const bikeChassis = new THREE.Group();
+    const rider1Group = new THREE.Group();
+    const rider2Group = new THREE.Group();
+    const scarfMeshGroup = new THREE.Group();
+    let headlightSpot = null;
+
+    function buildTwoSeaterMotorcycle() {
+      bikeGroup.add(bikeChassis);
+
+      // Front & Rear Knobby Scrambler Tires
+      const tireGeo = new THREE.BoxGeometry(0.36, 0.55, 0.55);
+      const tireMat = new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.9 });
+      const frontWheel = new THREE.Mesh(tireGeo, tireMat);
+      frontWheel.position.set(0, 0.28, -0.68);
+      frontWheel.castShadow = true;
+      bikeChassis.add(frontWheel);
+
+      const rearWheel = new THREE.Mesh(tireGeo, tireMat);
+      rearWheel.position.set(0, 0.28, 0.68);
+      rearWheel.castShadow = true;
+      bikeChassis.add(rearWheel);
+
+      // Frame & Scrambler Fuel Tank
+      const frameMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.38, 0.34, 1.35),
+        new THREE.MeshStandardMaterial({ color: 0x3f3f46, metalness: 0.6, roughness: 0.4 })
+      );
+      frameMesh.position.set(0, 0.48, 0);
+      frameMesh.castShadow = true;
+      bikeChassis.add(frameMesh);
+
+      const tankMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.46, 0.32, 0.55),
+        new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.35, metalness: 0.2 })
+      );
+      tankMesh.position.set(0, 0.72, -0.25);
+      tankMesh.castShadow = true;
+      bikeChassis.add(tankMesh);
+
+      // Two-Seater Leather Bench Seat
+      const seatMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.16, 0.88),
+        new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.85 })
+      );
+      seatMesh.position.set(0, 0.68, 0.26);
+      bikeChassis.add(seatMesh);
+
+      // Warm Miniature Headlight Cone + Spotlight
+      const lampMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.28, 0.24, 0.15),
+        new THREE.MeshBasicMaterial({ color: 0xfef08a })
+      );
+      lampMesh.position.set(0, 0.78, -0.78);
+      bikeChassis.add(lampMesh);
+
+      headlightSpot = new THREE.SpotLight(0xfef08a, 2.0, 22, Math.PI / 5, 0.45, 1.2);
+      headlightSpot.position.set(0, 0.9, -0.75);
+      headlightSpot.target.position.set(0, 0.1, -8.5);
+      bikeChassis.add(headlightSpot);
+      bikeChassis.add(headlightSpot.target);
+
+      // Rider 1 (Driver - Front Seat)
+      rider1Group.position.set(0, 0.75, -0.05);
+      const r1Torso = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.46, 0.32),
+        new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.7 })
+      );
+      r1Torso.position.y = 0.25;
+      rider1Group.add(r1Torso);
+
+      const r1Head = new THREE.Mesh(
+        new THREE.BoxGeometry(0.44, 0.44, 0.44),
+        new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.5 })
+      );
+      r1Head.position.y = 0.68;
+      rider1Group.add(r1Head);
+
+      // Chibi Flowing Red Scarf (Animated at 12 FPS)
+      const scarfMat = new THREE.MeshStandardMaterial({ color: 0xef4444 });
+      for (let s = 0; s < 3; s++) {
+        const seg = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 0.18), scarfMat);
+        seg.position.set(0.16, 1.12 - s * 0.03, 0.18 + s * 0.16);
+        scarfMeshGroup.add(seg);
+      }
+      bikeChassis.add(scarfMeshGroup);
+      bikeChassis.add(rider1Group);
+
+      // Rider 2 (Pillion Partner - Back Seat 360° Turret Gunner)
+      rider2Group.position.set(0, 0.78, 0.45);
+      const r2Torso = new THREE.Mesh(
+        new THREE.BoxGeometry(0.40, 0.44, 0.30),
+        new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.7 })
+      );
+      r2Torso.position.y = 0.22;
+      rider2Group.add(r2Torso);
+
+      const r2Head = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42, 0.42, 0.42),
+        new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.5 })
+      );
+      r2Head.position.y = 0.64;
+      rider2Group.add(r2Head);
+
+      const gunMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.16, 0.62),
+        new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.7, roughness: 0.3 })
+      );
+      gunMesh.position.set(0.26, 0.32, -0.28);
+      rider2Group.add(gunMesh);
+
+      bikeChassis.add(rider2Group);
+      dioramaRoot.add(bikeGroup);
+    }
+    buildTwoSeaterMotorcycle();
+
+    // ============================================================================
+    // 7. HORDE ZOMBIES, LOOT CRATES & VOXEL DEBRIS PARTICLES
+    // ============================================================================
+    const zombies = [];
+    const projectiles = [];
+    const lootCrates = [];
+    const particles = [];
+
+    const sharedPartGeo = new THREE.BoxGeometry(0.22, 0.22, 0.22);
+
+    function spawnVoxelBurst(wx, wy, wz, hexColor, count = 6, speed = 5) {
+      const mat = new THREE.MeshStandardMaterial({ color: hexColor, roughness: 0.7 });
+      for (let i = 0; i < count; i++) {
+        const m = new THREE.Mesh(sharedPartGeo, mat);
+        m.position.set(wx, wy, wz);
+        entitiesGroup.add(m);
+        const angle = Math.random() * Math.PI * 2;
+        const spd = (0.35 + Math.random() * 0.65) * speed;
+        particles.push({
+          mesh: m,
+          vx: Math.cos(angle) * spd,
+          vy: 2.5 + Math.random() * speed * 0.85,
+          vz: Math.sin(angle) * spd,
+          life: 0.35 + Math.random() * 0.35
+        });
+      }
+    }
+
+    function createChibiZombieMesh(isMutant) {
+      const g = new THREE.Group();
+      const bodyColor = isMutant ? 0x9333ea : 0x3f6212;
+      const headColor = isMutant ? 0xd8b4fe : 0x84cc16;
+      const scale = isMutant ? 1.35 : 1.0;
+
+      const torso = new THREE.Mesh(
+        new THREE.BoxGeometry(0.38 * scale, 0.44 * scale, 0.28 * scale),
+        new THREE.MeshStandardMaterial({ color: bodyColor, roughness: 0.8 })
+      );
+      torso.position.y = 0.26 * scale;
+      torso.castShadow = true;
+      g.add(torso);
+
+      const head = new THREE.Mesh(
+        new THREE.BoxGeometry(0.42 * scale, 0.40 * scale, 0.40 * scale),
+        new THREE.MeshStandardMaterial({ color: headColor, roughness: 0.6 })
+      );
+      head.position.y = 0.68 * scale;
+      head.castShadow = true;
+      g.add(head);
+
+      const eyeMat = new THREE.MeshBasicMaterial({ color: isMutant ? 0xf43f5e : 0xfef08a });
+      const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.05), eyeMat);
+      eyeL.position.set(-0.1 * scale, 0.70 * scale, -0.21 * scale);
+      const eyeR = eyeL.clone();
+      eyeR.position.x = 0.1 * scale;
+      g.add(eyeL, eyeR);
+
+      return g;
+    }
+
+    function spawnChunkHordeAndLoot(rng) {
+      while (entitiesGroup.children.length > 0) {
+        entitiesGroup.remove(entitiesGroup.children[0]);
+      }
+      zombies.length = 0;
+      projectiles.length = 0;
+      lootCrates.length = 0;
+      particles.length = 0;
+
+      // Spawn 34-46 Chibi Zombies & Mutants across the larger 80x160 block
+      const targetCount = 34 + Math.floor(rng() * 12);
+      for (let i = 0; i < targetCount; i++) {
+        const gx = 3 + Math.floor(rng() * (GRID_W - 6));
+        const gz = 3 + Math.floor(rng() * (GRID_L - 6));
+        const t = state.surfaceGrid[idx(gx, gz)];
+        if (t === TILE_BUILDING || t === TILE_WATER) continue;
+
+        const { wx, wz } = gridToWorld(gx, gz);
+        if (Math.hypot(wx - state.bike.x, wz - state.bike.z) < 7.5) continue;
+
+        const isMutant = rng() < 0.18;
+        const mesh = createChibiZombieMesh(isMutant);
+        mesh.position.set(wx, 0, wz);
+        entitiesGroup.add(mesh);
+
+        zombies.push({
+          mesh,
+          x: wx,
+          z: wz,
+          vx: 0,
+          vz: 0,
+          hp: isMutant ? 90 : 35,
+          speed: isMutant ? 4.2 : (2.6 + rng() * 1.2),
+          isMutant,
+          phase: rng() * Math.PI * 2,
+          steppedY: 0,
+          steppedRotZ: 0
+        });
+      }
+
+      // Spawn 4 Supply Crates along roads/rails
+      const crateGeo = new THREE.BoxGeometry(0.62, 0.52, 0.62);
+      const crateMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.4, metalness: 0.3 });
+      let cratesSpawned = 0;
+      for (let attempts = 0; attempts < 45 && cratesSpawned < 4; attempts++) {
+        const gx = 4 + Math.floor(rng() * (GRID_W - 8));
+        const gz = 6 + Math.floor(rng() * (GRID_L - 12));
+        const t = state.surfaceGrid[idx(gx, gz)];
+        if (t === TILE_ROAD || t === TILE_RAIL || t === TILE_SIDEWALK) {
+          const { wx, wz } = gridToWorld(gx, gz);
+          const m = new THREE.Mesh(crateGeo, crateMat);
+          m.position.set(wx, 0.38, wz);
+          m.castShadow = true;
+          entitiesGroup.add(m);
+          lootCrates.push({ mesh: m, x: wx, z: wz });
+          cratesSpawned++;
+        }
+      }
+    }
+
+    // ============================================================================
+    // 8. REAL-WORLD OPENSTREETMAP (OVERPASS API) LIVE RASTERIZER & NOMINATIM SEARCH
+    // ============================================================================
+    async function syncLiveOSMData() {
+      const badge = document.getElementById('osm-badge');
+      const cacheKey = `${state.chunkX}_${state.chunkZ}_${state.baseLat.toFixed(4)}`;
+      if (state.osmCache.has(cacheKey)) {
+        generateDioramaChunk(state.osmCache.get(cacheKey));
+        return;
+      }
+
+      badge.textContent = "OSM SYNCING...";
+      badge.className = "mono text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold animate-pulse-fast shrink-0";
+
+      const { curLat, curLon } = getCurrentChunkLatLon();
+      const halfLat = CHUNK_LAT_SPAN * 0.52;
+      const halfLon = CHUNK_LON_SPAN * 0.52;
+      const s = curLat - halfLat, n = curLat + halfLat;
+      const w = curLon - halfLon, e = curLon + halfLon;
+
+      const query = `[out:json][timeout:8];(way["building"](${s},${w},${n},${e});way["highway"](${s},${w},${n},${e});way["railway"](${s},${w},${n},${e});way["waterway"](${s},${w},${n},${e});way["landuse"](${s},${w},${n},${e}););out body;>;out skel qt;`;
+
+      const endpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter"
+      ];
+
+      for (const url of endpoints) {
+        try {
+          const res = await fetch(url, { method: "POST", body: query });
+          if (!res.ok) continue;
+          const data = await res.json();
+          const nodes = new Map();
+          (data.elements || []).forEach(el => {
+            if (el.type === "node") {
+              // Project (lat, lon) onto 16x High-Res [0..80, 0..160] sub-voxel grid coordinates!
+              const gx = ((el.lon - w) / (e - w)) * GRID_W;
+              const gz = ((n - el.lat) / (n - s)) * GRID_L;
+              nodes.set(el.id, [gx, gz]);
+            }
+          });
+
+          const parsed = { roads: [], buildings: [], railways: [], waterways: [], streetNames: [] };
+          (data.elements || []).forEach(el => {
+            if (el.type !== "way" || !el.nodes) return;
+            const pts = el.nodes.map(id => nodes.get(id)).filter(Boolean);
+            if (pts.length < 2) return;
+            const tags = el.tags || {};
+
+            const labelCandidate = tags.name || tags.ref;
+            if (labelCandidate && !parsed.streetNames.includes(labelCandidate)) {
+              parsed.streetNames.push(labelCandidate);
+            }
+
+            if (tags.building) {
+              const levels = parseInt(tags["building:levels"], 10) || 2;
+              parsed.buildings.push({ poly: pts, levels, name: tags.name || tags["addr:street"] || "" });
+            } else if (tags.highway) {
+              const isPrimary = ["primary", "secondary", "trunk", "motorway"].includes(tags.highway);
+              const isResidential = ["tertiary", "residential", "unclassified"].includes(tags.highway);
+              const halfWidth = isPrimary ? 5.2 : (isResidential ? 3.6 : 2.2);
+              parsed.roads.push({ points: pts, halfWidth, name: tags.name || tags.ref || "" });
+            } else if (tags.railway) {
+              parsed.railways.push({ points: pts, name: tags.name || "CN Railroad" });
+            } else if (tags.waterway || tags.natural === "water") {
+              parsed.waterways.push({ points: pts });
+            }
+          });
+
+          state.osmCache.set(cacheKey, parsed);
+          const totalWays = parsed.buildings.length + parsed.roads.length + parsed.railways.length;
+          if (totalWays > 0) {
+            badge.textContent = `16× OSM (${parsed.buildings.length}B/${parsed.roads.length}R)`;
+            badge.className = "mono text-[10px] px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-semibold shrink-0";
+            generateDioramaChunk(parsed);
+            showChunkToast(`MAPPED 16× OSM VECTORS (${parsed.buildings.length} BLDGS, ${parsed.roads.length} STREETS)`);
+            return;
+          }
+        } catch (err) {
+          // Try next mirror or fallback
+        }
+      }
+
+      badge.textContent = "16× VERIFIED GIS";
+      badge.className = "mono text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-semibold shrink-0";
+    }
+
+    // Live Nominatim Geocoding Search (Type any town or street on Earth)
+    async function searchNominatimPlace() {
+      const q = document.getElementById('input-place-search').value.trim();
+      if (!q) return;
+      showChunkToast(`GEOCODING "${q.toUpperCase()}"...`);
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`);
+        const arr = await res.json();
+        if (arr && arr.length > 0) {
+          const hit = arr[0];
+          state.baseLat = parseFloat(hit.lat);
+          state.baseLon = parseFloat(hit.lon);
+          state.locationName = hit.display_name.split(',').slice(0, 2).join(',');
+          state.biomeHint = "URBAN";
+          state.chunkX = 0;
+          state.chunkZ = 0;
+          state.bike.x = 0.5;
+          state.bike.z = 5.5;
+          document.getElementById('input-lat').value = state.baseLat.toFixed(4);
+          document.getElementById('input-lon').value = state.baseLon.toFixed(4);
+          generateDioramaChunk();
+          syncLiveOSMData();
+          showChunkToast(`DROPPED INTO ${state.locationName.toUpperCase()}`);
+        } else {
+          showChunkToast(`LOCATION NOT FOUND — TRY "EMMETT MI" OR "CAPAC MI"`);
+        }
+      } catch (e) {
+        showChunkToast(`GEOCODER OFFLINE — USE LAT/LON DROP`);
+      }
+    }
+
+    // ============================================================================
+    // 9. SEAMLESS TABLETOP CHUNK SLIDE TRANSITION (EXPLORING THE EARTH)
+    // ============================================================================
+    function showChunkToast(msg) {
+      const toast = document.getElementById('chunk-toast');
+      document.getElementById('chunk-toast-text').textContent = msg;
+      toast.style.opacity = '1';
+      toast.style.transform = 'translate(-50%, 0)';
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translate(-50%, -8px)';
+      }, 2200);
+    }
+
+    function triggerChunkTransition(dx, dz) {
+      state.chunkX += dx;
+      state.chunkZ += dz;
+      state.blocksTraversed++;
+      document.getElementById('hud-blocks').textContent = state.blocksTraversed;
+
+      // Wrap bike to opposite edge of the new 20x40 block
+      const margin = 1.4;
+      if (dx > 0) state.bike.x = -HALF_W + margin;
+      if (dx < 0) state.bike.x = HALF_W - margin;
+      if (dz > 0) state.bike.z = -HALF_L + margin;
+      if (dz < 0) state.bike.z = HALF_L - margin;
+
+      // Ensure bike lands on a navigable road tile
+      state.bike.x = Math.max(-HALF_W + 2, Math.min(HALF_W - 2, state.bike.x));
+      state.bike.z = Math.max(-HALF_L + 2, Math.min(HALF_L - 2, state.bike.z));
+
+      // Tabletop Maquette Slide-in animation
+      state.transition.active = true;
+      state.transition.progress = 0;
+      state.transition.offsetX = dx * 12;
+      state.transition.offsetZ = dz * 18;
+
+      generateDioramaChunk();
+      syncLiveOSMData();
+      showChunkToast(`ENTERING EARTH BLOCK [${state.chunkX}, ${state.chunkZ}]`);
+    }
+
+    // ============================================================================
+    // 10. SIMULATION LOOP: FIXED SCREEN-SPACE & BIKE-RELATIVE STEERING + DRIFT
+    // ============================================================================
+    const raycaster = new THREE.Raycaster();
+    const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const mouseNDC = new THREE.Vector2();
+    let lastFlowComputeTime = 0;
+    let lastSteppedAnimTime = 0;
+    let steppedFrameCounter = 0;
+
+    const projGeo = new THREE.BoxGeometry(0.18, 0.18, 0.36);
+
+    function firePartnerWeapon(now) {
+      const weapon = WEAPONS[state.partner.weaponIndex];
+      if (now - state.partner.lastFireTime < weapon.cooldown) return;
+      state.partner.lastFireTime = now;
+
+      const originX = state.bike.x;
+      const originZ = state.bike.z;
+
+      for (let p = 0; p < weapon.pellets; p++) {
+        const angle = state.partner.aimAngle + (Math.random() - 0.5) * weapon.spread;
+        const vx = Math.sin(angle) * weapon.speed;
+        const vz = Math.cos(angle) * weapon.speed;
+
+        const mat = new THREE.MeshBasicMaterial({ color: weapon.color });
+        const mesh = new THREE.Mesh(projGeo, mat);
+        mesh.position.set(originX, 0.85, originZ);
+        mesh.rotation.y = angle;
+        entitiesGroup.add(mesh);
+
+        projectiles.push({
+          mesh,
+          x: originX,
+          y: 0.85,
+          z: originZ,
+          vx,
+          vz,
+          life: 0.85,
+          damage: weapon.damage,
+          color: weapon.color,
+          explosive: weapon.explosive
+        });
+      }
+    }
+
+    function updateSimulation(dt, now) {
+      const b = state.bike;
+
+      // 1. Tabletop Chunk Slide-In Animation
+      if (state.transition.active) {
+        state.transition.progress = Math.min(1, state.transition.progress + dt * 3.6);
+        const ease = 1 - Math.pow(1 - state.transition.progress, 3);
+        dioramaRoot.position.x = state.transition.offsetX * (1 - ease);
+        dioramaRoot.position.z = state.transition.offsetZ * (1 - ease);
+        dioramaRoot.position.y = -Math.sin( (1 - ease) * Math.PI ) * 1.8;
+        if (state.transition.progress >= 1) {
+          state.transition.active = false;
+          dioramaRoot.position.set(0, 0, 0);
+        }
+      }
+
+      // 2. Two-Seater Scrambler Motorcycle Controls (Fixed Screen-Space & Bike-Relative Modes!)
+      const rawUp = state.keys.up ? 1 : 0;
+      const rawDown = state.keys.down ? 1 : 0;
+      const rawLeft = state.keys.left ? 1 : 0;
+      const rawRight = state.keys.right ? 1 : 0;
+
+      b.drifting = state.keys.space && Math.hypot(b.vx, b.vz) > 3.0;
+      let visualSteerTilt = 0;
+
+      if (state.steerMode === 'SCREEN') {
+        // MODE A: SCREEN-SPACE DIRECTIONAL STEERING (Default - Impossible to feel reversed!)
+        // Up (W) = North (-Z), Down (S) = South (+Z), Left (A) = West (-X), Right (D) = East (+X)
+        // Rotated automatically by any cameraYawOffset if the user orbited the tabletop!
+        const inputX = rawRight - rawLeft;
+        const inputZ = rawDown - rawUp;
+        const inputMag = Math.hypot(inputX, inputZ);
+
+        if (inputMag > 0.01 && b.fuel > 0) {
+          const nx = inputX / inputMag;
+          const nz = inputZ / inputMag;
+          // Transform screen input vector by camera yaw offset
+          const cosY = Math.cos(state.cameraYawOffset);
+          const sinY = Math.sin(state.cameraYawOffset);
+          const worldDirX = nx * cosY + nz * sinY;
+          const worldDirZ = -nx * sinY + nz * cosY;
+
+          // Target heading in Three.js where forward = (-sin(heading), -cos(heading))
+          const desiredHeading = Math.atan2(-worldDirX, -worldDirZ);
+
+          // Shortest angular delta in [-PI, PI]
+          let angleDiff = desiredHeading - b.heading;
+          while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+          while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+          const turnSpeed = b.drifting ? 10.5 : 7.8;
+          b.heading += angleDiff * Math.min(1, turnSpeed * dt);
+          visualSteerTilt = Math.max(-1, Math.min(1, angleDiff * 1.8));
+
+          // Apply engine thrust along current bike heading (or directly if sharp-drifting)
+          const forwardX = -Math.sin(b.heading);
+          const forwardZ = -Math.cos(b.heading);
+          const engineForce = 25.0;
+          b.vx += (forwardX * 0.75 + worldDirX * 0.25) * engineForce * dt;
+          b.vz += (forwardZ * 0.75 + worldDirZ * 0.25) * engineForce * dt;
+          b.fuel = Math.max(0, b.fuel - dt * 0.75);
+        }
+      } else {
+        // MODE B: VEHICLE-RELATIVE STEERING (With Non-Inverted Left/Right & Reverse Fix)
+        const accelInput = rawUp - rawDown * 0.7;
+        let steerSign = rawLeft - rawRight; // A (+1) = Left (CCW), D (-1) = Right (CW)
+        if (state.invertAD) steerSign = -steerSign;
+
+        const forwardX = -Math.sin(b.heading);
+        const forwardZ = -Math.cos(b.heading);
+        const forwardVel = b.vx * forwardX + b.vz * forwardZ;
+
+        const turnRate = b.drifting ? 3.8 : 2.8;
+        if (Math.abs(b.speed) > 0.15 || Math.abs(accelInput) > 0.01) {
+          const reverseFlip = forwardVel < -0.25 ? -1 : 1;
+          b.heading += steerSign * turnRate * reverseFlip * dt;
+          visualSteerTilt = steerSign;
+        }
+
+        if (accelInput !== 0 && b.fuel > 0) {
+          const engineForce = 24.5;
+          b.vx += forwardX * accelInput * engineForce * dt;
+          b.vz += forwardZ * accelInput * engineForce * dt;
+          b.fuel = Math.max(0, b.fuel - dt * 0.75);
+        }
+      }
+
+      // Lateral grip vs Drift slide
+      const forwardX = -Math.sin(b.heading);
+      const forwardZ = -Math.cos(b.heading);
+      const forwardVel = b.vx * forwardX + b.vz * forwardZ;
+      const rightX = Math.cos(b.heading);
+      const rightZ = -Math.sin(b.heading);
+      const lateralVel = b.vx * rightX + b.vz * rightZ;
+
+      const lateralGrip = b.drifting ? 2.0 : 10.5;
+      const newLateralVel = lateralVel * Math.max(0, 1 - lateralGrip * dt);
+      const drag = 1 - 1.95 * dt;
+
+      b.vx = (forwardVel * forwardX + newLateralVel * rightX) * drag;
+      b.vz = (forwardVel * forwardZ + newLateralVel * rightZ) * drag;
+      b.speed = Math.hypot(b.vx, b.vz) * (forwardVel >= -0.1 ? 1 : -1);
+
+      // Drift Boost Release
+      if (b.drifting) {
+        b.driftCharge = Math.min(1.5, b.driftCharge + dt);
+        if (Math.random() < 0.45) {
+          spawnVoxelBurst(b.x, 0.15, b.z, 0x94a3b8, 1, 1.8);
+        }
+      } else if (b.driftCharge > 0.40) {
+        b.vx += forwardX * 10.0;
+        b.vz += forwardZ * 10.0;
+        spawnVoxelBurst(b.x, 0.25, b.z, 0xf59e0b, 6, 5);
+        b.driftCharge = 0;
+      } else {
+        b.driftCharge = 0;
+      }
+
+      // Proposed next position & Voxel Grid Collision check
+      const nextX = b.x + b.vx * dt;
+      const nextZ = b.z + b.vz * dt;
+
+      // Check if bike rode off the North/South/East/West boundary of the 20x40 block
+      if (nextX > HALF_W - 0.3) { triggerChunkTransition(1, 0); return; }
+      if (nextX < -HALF_W + 0.3) { triggerChunkTransition(-1, 0); return; }
+      if (nextZ > HALF_L - 0.3) { triggerChunkTransition(0, 1); return; }
+      if (nextZ < -HALF_L + 0.3) { triggerChunkTransition(0, -1); return; }
+
+      const { gx, gz } = worldToGrid(nextX, nextZ);
+      const cIdx = idx(gx, gz);
+      const nextTile = state.surfaceGrid[cIdx];
+
+      if (nextTile === TILE_BUILDING || nextTile === TILE_WATER) {
+        // Bounce off building wall or river parapet
+        b.vx *= -0.45;
+        b.vz *= -0.45;
+        spawnVoxelBurst(nextX, 0.5, nextZ, 0xfbbf24, 4, 4);
+      } else if (nextTile === TILE_RUBBLE) {
+        // Crush through small rubble at high speed or slow down
+        state.surfaceGrid[cIdx] = TILE_SIDEWALK;
+        b.vx *= 0.72;
+        b.vz *= 0.72;
+        spawnVoxelBurst(nextX, 0.4, nextZ, 0x64748b, 6, 4.5);
+      } else {
+        b.x = nextX;
+        b.z = nextZ;
+      }
+
+      // Update Bike Transform & Suspension
+      bikeGroup.position.set(b.x, 0.05 + Math.abs(Math.sin(now * 18)) * (Math.abs(b.speed) * 0.005), b.z);
+      bikeGroup.rotation.y = b.heading;
+      const targetLean = -visualSteerTilt * (b.drifting ? 0.46 : 0.28) * Math.min(1, Math.abs(b.speed) / 5);
+      b.leanAngle += (targetLean - b.leanAngle) * 10 * dt;
+      bikeChassis.rotation.z = b.leanAngle;
+
+      // Recompute 20x40 Flow Field periodically
+      if (now - lastFlowComputeTime > 0.22) {
+        lastFlowComputeTime = now;
+        computeDijkstraFlowField();
+        if (state.showFlowDebug) rebuildFlowDebugOverlay();
+      }
+
+      // 3. Partner Aiming & Firing (Auto-Turret + Mouse Cursor)
+      let targetAngle = Math.atan2(
+        state.mouseWorldPos.x - b.x,
+        state.mouseWorldPos.z - b.z
+      );
+      let hasThreatInRange = false;
+
+      if (state.partner.autoAim && !state.mouseDown && zombies.length > 0) {
+        let bestDist = 13.5;
+        let nearestZ = null;
+        for (let i = 0; i < zombies.length; i++) {
+          const z = zombies[i];
+          const d = Math.hypot(z.x - b.x, z.z - b.z);
+          if (d < bestDist) {
+            bestDist = d;
+            nearestZ = z;
+          }
+        }
+        if (nearestZ) {
+          targetAngle = Math.atan2(nearestZ.x - b.x, nearestZ.z - b.z);
+          hasThreatInRange = true;
+        }
+      }
+
+      state.partner.aimAngle = targetAngle;
+
+      if (state.mouseDown || hasThreatInRange) {
+        firePartnerWeapon(now);
+      }
+
+      // 4. Stepped 12-FPS Stop-Motion Character Animation Pass (every 83.3ms)
+      if (now - lastSteppedAnimTime >= 1 / 12) {
+        lastSteppedAnimTime = now;
+        steppedFrameCounter++;
+
+        // Snap Partner upper torso rotation to 12 FPS
+        rider2Group.rotation.y = state.partner.aimAngle - b.heading + Math.PI;
+        rider1Group.rotation.z = -visualSteerTilt * 0.18;
+
+        // Animate Driver's pixel scarf at 12 FPS
+        scarfMeshGroup.children.forEach((seg, idx) => {
+          seg.position.x = 0.16 + Math.sin(steppedFrameCounter * 0.9 + idx) * 0.06;
+          seg.position.y = 1.12 - idx * 0.03 + Math.cos(steppedFrameCounter * 0.8 + idx) * 0.04;
+        });
+
+        // Step zombie hop & waddle poses at 12 FPS
+        for (let i = 0; i < zombies.length; i++) {
+          const z = zombies[i];
+          z.steppedY = Math.abs(Math.sin(steppedFrameCounter * 0.85 + z.phase)) * 0.22;
+          z.steppedRotZ = Math.cos(steppedFrameCounter * 0.85 + z.phase) * 0.16;
+        }
+      }
+
+      // 5. Update Zombies using 20x40 Flow-Field Vectors & Ramming Physics
+      for (let i = zombies.length - 1; i >= 0; i--) {
+        const z = zombies[i];
+        const { gx: zgx, gz: zgz } = worldToGrid(z.x, z.z);
+        const zCell = idx(zgx, zgz);
+
+        const fx = state.flowDirX[zCell];
+        const fz = state.flowDirZ[zCell];
+
+        z.vx = z.vx * 0.82 + fx * z.speed * 0.18;
+        z.vz = z.vz * 0.82 + fz * z.speed * 0.18;
+
+        const nx = z.x + z.vx * dt;
+        const nz = z.z + z.vz * dt;
+        const { gx: ngX, gz: ngZ } = worldToGrid(nx, nz);
+        const nTile = state.surfaceGrid[idx(ngX, ngZ)];
+        if (nTile !== TILE_BUILDING && nTile !== TILE_WATER) {
+          z.x = nx;
+          z.z = nz;
+        }
+
+        // Check Motorcycle Ramming vs Zombie Bite
+        const distToBike = Math.hypot(z.x - b.x, z.z - b.z);
+        if (distToBike < 1.05) {
+          if (Math.abs(b.speed) > 5.0 || b.drifting) {
+            // Roadkill / Drift Cleave!
+            z.hp -= 65;
+            z.vx = (z.x - b.x) * 14;
+            z.vz = (z.z - b.z) * 14;
+            spawnVoxelBurst(z.x, 0.5, z.z, z.isMutant ? 0xa855f7 : 0x84cc16, 7, 6);
+          } else {
+            // Zombie damages bike hull
+            b.hp = Math.max(0, b.hp - 12 * dt);
+          }
+        }
+
+        if (z.hp <= 0) {
+          entitiesGroup.remove(z.mesh);
+          spawnVoxelBurst(z.x, 0.45, z.z, z.isMutant ? 0xd946ef : 0x65a30d, 10, 7);
+          zombies.splice(i, 1);
+          state.kills++;
+          state.scrap += z.isMutant ? 6 : 2;
+          continue;
+        }
+
+        z.mesh.position.set(z.x, z.steppedY, z.z);
+        z.mesh.rotation.y = Math.atan2(-z.vx, -z.vz);
+        z.mesh.rotation.z = z.steppedRotZ;
+      }
+
+      // 6. Update Projectiles & Voxel Crater Explosions
+      for (let i = projectiles.length - 1; i >= 0; i--) {
+        const p = projectiles[i];
+        p.x += p.vx * dt;
+        p.z += p.vz * dt;
+        p.life -= dt;
+        p.mesh.position.set(p.x, p.y, p.z);
+
+        let hit = false;
+        const { gx: pgx, gz: pgz } = worldToGrid(p.x, p.z);
+        if (state.surfaceGrid[idx(pgx, pgz)] === TILE_BUILDING) {
+          hit = true;
+        }
+
+        if (!hit) {
+          for (let j = 0; j < zombies.length; j++) {
+            const z = zombies[j];
+            if (Math.hypot(p.x - z.x, p.z - z.z) < 0.65) {
+              z.hp -= p.damage;
+              z.vx += p.vx * 0.25;
+              z.vz += p.vz * 0.25;
+              hit = true;
+              break;
+            }
+          }
+        }
+
+        if (hit || p.life <= 0) {
+          if (p.explosive) {
+            spawnVoxelBurst(p.x, 0.5, p.z, 0xf43f5e, 14, 9);
+            for (let j = 0; j < zombies.length; j++) {
+              const z = zombies[j];
+              const d = Math.hypot(p.x - z.x, p.z - z.z);
+              if (d < 3.4) {
+                z.hp -= 85 * (1 - d / 3.4);
+                z.vx += (z.x - p.x) * 8;
+                z.vz += (z.z - p.z) * 8;
+              }
+            }
+          } else if (hit) {
+            spawnVoxelBurst(p.x, 0.5, p.z, p.color, 3, 3.5);
+          }
+          entitiesGroup.remove(p.mesh);
+          projectiles.splice(i, 1);
+        }
+      }
+
+      // 7. Update Supply Loot Crates
+      for (let i = lootCrates.length - 1; i >= 0; i--) {
+        const c = lootCrates[i];
+        c.mesh.rotation.y += dt * 1.8;
+        c.mesh.position.y = 0.38 + Math.sin(now * 3.5 + i) * 0.1;
+        if (Math.hypot(c.x - b.x, c.z - b.z) < 1.35) {
+          b.fuel = Math.min(100, b.fuel + 30);
+          b.hp = Math.min(100, b.hp + 15);
+          state.scrap += 10;
+          spawnVoxelBurst(c.x, 0.5, c.z, 0xfbbf24, 9, 5);
+          entitiesGroup.remove(c.mesh);
+          lootCrates.splice(i, 1);
+        }
+      }
+
+      // 8. Update Voxel Debris Particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const pt = particles[i];
+        pt.vy -= 18 * dt;
+        pt.mesh.position.x += pt.vx * dt;
+        pt.mesh.position.y += pt.vy * dt;
+        pt.mesh.position.z += pt.vz * dt;
+        if (pt.mesh.position.y < 0.08) {
+          pt.mesh.position.y = 0.08;
+          pt.vy *= -0.45;
+          pt.vx *= 0.7;
+          pt.vz *= 0.7;
+        }
+        pt.life -= dt;
+        pt.mesh.scale.setScalar(Math.max(0.01, pt.life * 1.5));
+        if (pt.life <= 0) {
+          entitiesGroup.remove(pt.mesh);
+          particles.splice(i, 1);
+        }
+      }
+
+      // Auto-respawn bike if hull or fuel hits 0
+      if (b.hp <= 0 || b.fuel <= 0) {
+        b.hp = 100;
+        b.fuel = 100;
+        state.scrap = Math.max(0, state.scrap - 10);
+        showChunkToast("EMERGENCY FIELD TOW — HULL & FUEL RESTORED");
+      }
+
+      // 9. Update Telephoto Camera Rig & 3D Floating GIS Labels
+      const pitchRad = THREE.MathUtils.degToRad(state.cameraPitchDeg);
+      const camDist = state.cameraZoom;
+      const targetFocusX = b.x * 0.55;
+      const targetFocusZ = b.z * 0.62;
+
+      const camX = targetFocusX + Math.sin(state.cameraYawOffset) * Math.cos(pitchRad) * camDist;
+      const camY = Math.sin(pitchRad) * camDist;
+      const camZ = targetFocusZ + Math.cos(state.cameraYawOffset) * Math.cos(pitchRad) * camDist;
+
+      camera.position.lerp(new THREE.Vector3(camX, camY, camZ), 8 * dt);
+      camera.lookAt(targetFocusX, 0.5, targetFocusZ);
+      camera.updateMatrixWorld();
+      updateGISFloatingLabelsScreenPos();
+    }
+
+    // ============================================================================
+    // 11. 80x160 (16x DENSITY) MINI-RADAR & REAL-WORLD GIS FOOTPRINT INSPECTOR
+    // ============================================================================
+    const radarCanvas = document.getElementById('radar-canvas');
+    const radarCtx = radarCanvas.getContext('2d');
+
+    function updateHUDAndRadar() {
+      const b = state.bike;
+      document.getElementById('hud-hp-text').textContent = `${Math.round(b.hp)}%`;
+      document.getElementById('hud-hp-bar').style.width = `${b.hp}%`;
+      document.getElementById('hud-fuel-text').textContent = `${Math.round(b.fuel)}%`;
+      document.getElementById('hud-fuel-bar').style.width = `${b.fuel}%`;
+      document.getElementById('hud-kills').textContent = state.kills;
+      document.getElementById('hud-scrap').textContent = state.scrap;
+
+      const kmh = Math.round(Math.abs(b.speed) * 6.5);
+      document.getElementById('hud-speed').textContent = kmh;
+
+      const driftBadge = document.getElementById('hud-drift-badge');
+      if (b.drifting) {
+        driftBadge.textContent = "⚡ DRIFT BOOSTING";
+        driftBadge.className = "mt-1 text-[9px] mono px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-300 border border-amber-500/40 inline-block font-bold";
+      } else {
+        driftBadge.textContent = state.steerMode === 'SCREEN' ? "SCREEN-DIRECT OK" : "BIKE-STEER OK";
+        driftBadge.className = "mt-1 text-[9px] mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 inline-block";
+      }
+
+      // Highlight live key indicators on HUD
+      const toggleKeyPill = (id, active) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.className = active
+          ? "px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 border border-amber-300 text-[10px] font-extrabold shadow-[0_0_8px_#f59e0b]"
+          : "px-1.5 py-0.5 rounded bg-slate-800 border border-white/10 text-[10px] font-bold text-slate-300";
+      };
+      toggleKeyPill('key-w', state.keys.up);
+      toggleKeyPill('key-a', state.keys.left);
+      toggleKeyPill('key-s', state.keys.down);
+      toggleKeyPill('key-d', state.keys.right);
+      toggleKeyPill('key-space', state.keys.space);
+
+      // Draw 80x160 High-Resolution GIS Footprint Inspector & Mini-Radar (100x160px)
+      const rw = radarCanvas.width;
+      const rh = radarCanvas.height;
+      radarCtx.fillStyle = "#090d16";
+      radarCtx.fillRect(0, 0, rw, rh);
+
+      const cw = rw / GRID_W;
+      const ch = rh / GRID_L;
+
+      for (let gz = 0; gz < GRID_L; gz++) {
+        for (let gx = 0; gx < GRID_W; gx++) {
+          const t = state.surfaceGrid[idx(gx, gz)];
+          if (t === TILE_BUILDING) {
+            radarCtx.fillStyle = "#c2410c";
+            radarCtx.fillRect(gx * cw, gz * ch, cw + 0.2, ch + 0.2);
+          } else if (t === TILE_WATER) {
+            radarCtx.fillStyle = "#0d9488";
+            radarCtx.fillRect(gx * cw, gz * ch, cw, ch);
+          } else if (t === TILE_RAIL) {
+            radarCtx.fillStyle = "#e7e5e4";
+            radarCtx.fillRect(gx * cw, gz * ch, cw, ch);
+          } else if (t === TILE_ROAD || t === TILE_BRIDGE) {
+            radarCtx.fillStyle = "#475569";
+            radarCtx.fillRect(gx * cw, gz * ch, cw, ch);
+          } else if (t === TILE_SIDEWALK) {
+            radarCtx.fillStyle = "#1e293b";
+            radarCtx.fillRect(gx * cw, gz * ch, cw, ch);
+          }
+        }
+      }
+
+      // Draw Supply Crates
+      radarCtx.fillStyle = "#fbbf24";
+      lootCrates.forEach(c => {
+        const { gx, gz } = worldToGrid(c.x, c.z);
+        radarCtx.fillRect(gx * cw - 1.5, gz * ch - 1.5, 3.5, 3.5);
+      });
+
+      // Draw Zombie Horde Dots
+      zombies.forEach(z => {
+        const { gx, gz } = worldToGrid(z.x, z.z);
+        radarCtx.fillStyle = z.isMutant ? "#d946ef" : "#ef4444";
+        radarCtx.fillRect(gx * cw - 1, gz * ch - 1, 2.2, 2.2);
+      });
+
+      // Draw Two-Seater Motorcycle Position & Heading Vector
+      const { gx: bgx, gz: bgz } = worldToGrid(b.x, b.z);
+      const px = bgx * cw;
+      const pz = bgz * ch;
+      radarCtx.strokeStyle = "#fde047";
+      radarCtx.lineWidth = 1.5;
+      radarCtx.beginPath();
+      radarCtx.moveTo(px, pz);
+      radarCtx.lineTo(px - Math.sin(b.heading) * 9, pz - Math.cos(b.heading) * 9);
+      radarCtx.stroke();
+
+      radarCtx.fillStyle = "#38bdf8";
+      radarCtx.beginPath();
+      radarCtx.arc(px, pz, 3.5, 0, Math.PI * 2);
+      radarCtx.fill();
+    }
+
+    // Steering Mode Toggle Button
+    document.getElementById('btn-steer-mode').addEventListener('click', (e) => {
+      state.steerMode = state.steerMode === 'SCREEN' ? 'BIKE' : 'SCREEN';
+      if (state.steerMode === 'SCREEN') {
+        e.target.textContent = "SCREEN-SPACE (DIRECT WASD)";
+        e.target.className = "hud-btn px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold text-[10px]";
+      } else {
+        e.target.textContent = "BIKE-RELATIVE (W=GAS, A/D=TURN)";
+        e.target.className = "hud-btn px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold text-[10px]";
+      }
+    });
+
+    // Location Preset Selector, Nominatim Search & Custom GPS
+    document.getElementById('preset-select').addEventListener('change', (e) => {
+      const parts = e.target.value.split(',');
+      state.baseLat = parseFloat(parts[0]);
+      state.baseLon = parseFloat(parts[1]);
+      state.locationName = parts.slice(2, parts.length - 1).join(',');
+      state.biomeHint = parts[parts.length - 1] || "URBAN";
+      state.chunkX = 0;
+      state.chunkZ = 0;
+      state.bike.x = 0.5;
+      state.bike.z = 5.5;
+      document.getElementById('input-lat').value = state.baseLat.toFixed(4);
+      document.getElementById('input-lon').value = state.baseLon.toFixed(4);
+      generateDioramaChunk();
+      syncLiveOSMData();
+      showChunkToast(`DROPPED INTO ${state.locationName.toUpperCase()}`);
+    });
+
+    document.getElementById('btn-custom-gps').addEventListener('click', () => {
+      document.getElementById('custom-gps-drawer').classList.toggle('hidden');
+    });
+
+    document.getElementById('btn-search-place').addEventListener('click', searchNominatimPlace);
+    document.getElementById('input-place-search').addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') searchNominatimPlace();
+    });
+
+    document.getElementById('btn-go-gps').addEventListener('click', () => {
+      const lat = parseFloat(document.getElementById('input-lat').value) || 42.9906;
+      const lon = parseFloat(document.getElementById('input-lon').value) || -82.7649;
+      state.baseLat = Math.max(-85, Math.min(85, lat));
+      state.baseLon = Math.max(-180, Math.min(180, lon));
+      state.locationName = `Custom GPS (${state.baseLat.toFixed(4)}, ${state.baseLon.toFixed(4)})`;
+      state.biomeHint = "URBAN";
+      state.chunkX = 0;
+      state.chunkZ = 0;
+      state.bike.x = 0.5;
+      state.bike.z = 5.5;
+      generateDioramaChunk();
+      syncLiveOSMData();
+      showChunkToast(`TELEPORTED TO ${state.baseLat.toFixed(4)}, ${state.baseLon.toFixed(4)}`);
+    });
+
+    document.getElementById('btn-fetch-osm').addEventListener('click', () => {
+      state.osmCache.clear();
+      syncLiveOSMData();
+    });
+
+      document.getElementById('chk-invert-steer').addEventListener('change', (e) => {
+        state.invertAD = e.target.checked;
+      });
+
+    window.addEventListener('keydown', (e) => {
+      if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+      const k = e.key.toLowerCase();
+      if (k === 'w' || e.key === 'ArrowUp') state.keys.up = true;
+      if (k === 's' || e.key === 'ArrowDown') state.keys.down = true;
+      if (k === 'a' || e.key === 'ArrowLeft') state.keys.left = true;
+      if (k === 'd' || e.key === 'ArrowRight') state.keys.right = true;
+      if (k === ' ') { e.preventDefault(); state.keys.space = true; }
+      if (k === '1') selectWeapon(0);
+      if (k === '2') selectWeapon(1);
+      if (k === '3') selectWeapon(2);
+      if (k === 'r') triggerFieldRepair();
+    });
+
+    window.addEventListener('keyup', (e) => {
+      const k = e.key.toLowerCase();
+      if (k === 'w' || e.key === 'ArrowUp') state.keys.up = false;
+      if (k === 's' || e.key === 'ArrowDown') state.keys.down = false;
+      if (k === 'a' || e.key === 'ArrowLeft') state.keys.left = false;
+      if (k === 'd' || e.key === 'ArrowRight') state.keys.right = false;
+      if (k === ' ') state.keys.space = false;
+    });
+
+    // Mouse Raycasting onto Diorama Floor & Right-Drag Table Orbit
+    const crosshairEl = document.getElementById('crosshair');
+    window.addEventListener('mousemove', (e) => {
+      crosshairEl.style.left = `${e.clientX}px`;
+      crosshairEl.style.top = `${e.clientY}px`;
+
+      if (state.rightMouseDown) {
+        const dx = e.clientX - state.lastMouseX;
+        state.cameraYawOffset -= dx * 0.0065;
+        state.lastMouseX = e.clientX;
+      }
+
+      mouseNDC.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouseNDC, camera);
+      raycaster.ray.intersectPlane(groundPlane, state.mouseWorldPos);
+    });
+
+    renderer.domElement.addEventListener('mousedown', (e) => {
+      if (e.button === 0) state.mouseDown = true;
+      if (e.button === 2) {
+        state.rightMouseDown = true;
+        state.lastMouseX = e.clientX;
+      }
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 0) state.mouseDown = false;
+      if (e.button === 2) state.rightMouseDown = false;
+    });
+
+    window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    window.addEventListener('wheel', (e) => {
+      state.cameraZoom = Math.max(36, Math.min(86, state.cameraZoom + e.deltaY * 0.03));
+    });
+
+    // Weapon Selection
+    function selectWeapon(idx) {
+      state.partner.weaponIndex = idx;
+      document.querySelectorAll('.weapon-btn').forEach((btn, i) => {
+        if (i === idx) btn.classList.add('weapon-active');
+        else btn.classList.remove('weapon-active');
+      });
+    }
+    document.querySelectorAll('.weapon-btn').forEach(btn => {
+      btn.addEventListener('click', () => selectWeapon(parseInt(btn.dataset.weapon, 10)));
+    });
+
+    // Field Repair Button
+    function triggerFieldRepair() {
+      if (state.scrap >= 15 && (state.bike.hp < 100 || state.bike.fuel < 100)) {
+        state.scrap -= 15;
+      state.bike.hp = Math.min(100, state.bike.hp + 45);
+      state.bike.fuel = Math.min(100, state.bike.fuel + 45);
+      spawnVoxelBurst(state.bike.x, 0.8, state.bike.z, 0x34d399, 10, 5);
+      showChunkToast("SCRAMBLER PATCHED & REFUELED");
+      }
+    }
+    document.getElementById('btn-repair').addEventListener('click', triggerFieldRepair);
+
+    // Tilt-Shift Blur & Camera Sliders
+    document.getElementById('slider-dof').addEventListener('input', (e) => {
+      document.documentElement.style.setProperty('--tilt-blur', `${e.target.value}px`);
+    });
+    document.getElementById('slider-pitch').addEventListener('input', (e) => {
+      state.cameraPitchDeg = parseFloat(e.target.value);
+    });
+
+    // Aim Mode Toggle
+    document.getElementById('btn-aim-mode').addEventListener('click', (e) => {
+      state.partner.autoAim = !state.partner.autoAim;
+      e.target.textContent = state.partner.autoAim ? "AIM: AUTO + CURSOR" : "AIM: MANUAL CURSOR";
+    });
+
+    // Flow-Field Debug Overlay Toggle
+    document.getElementById('btn-flow-debug').addEventListener('click', (e) => {
+      state.showFlowDebug = !state.showFlowDebug;
+      e.target.textContent = state.showFlowDebug ? "⊞ 16× FLOW FIELD: ON" : "⊞ 16× FLOW FIELD: OFF";
+      rebuildFlowDebugOverlay();
+    });
+
+    // Live Map Base Layer & 3D GIS Pins Toggle
+    document.getElementById('btn-map-layer').addEventListener('click', (e) => {
+      state.showMapLayer = !state.showMapLayer;
+      if (liveMapPlaneMesh) liveMapPlaneMesh.visible = state.showMapLayer;
+      e.target.textContent = state.showMapLayer ? "🗺 MAP BASE: ON" : "🗺 MAP BASE: OFF";
+      e.target.className = state.showMapLayer
+        ? "hud-btn flex-1 text-[10px] mono py-1 px-2 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-semibold"
+        : "hud-btn flex-1 text-[10px] mono py-1 px-2 rounded bg-slate-800/90 border border-white/10 text-slate-400 font-semibold";
+      generateDioramaChunk();
+    });
+
+    // Time of Day Lighting Presets
+    const TIME_PRESETS = [
+      { label: "☀ GOLDEN HOUR", bg: 0x0c0f17, sunColor: 0xffdfa0, sunInt: 1.45, ambInt: 0.75, spotInt: 2.0 },
+      { label: "☁ OVERCAST DUSK", bg: 0x111827, sunColor: 0x93c5fd, sunInt: 0.85, ambInt: 0.55, spotInt: 2.8 },
+      { label: "☾ MIDNIGHT HEADLIGHTS", bg: 0x04060a, sunColor: 0x38bdf8, sunInt: 0.28, ambInt: 0.22, spotInt: 4.5 }
+    ];
+    document.getElementById('btn-time').addEventListener('click', (e) => {
+      state.timeOfDayIndex = (state.timeOfDayIndex + 1) % TIME_PRESETS.length;
+      const p = TIME_PRESETS[state.timeOfDayIndex];
+      e.target.textContent = p.label;
+      scene.background.setHex(p.bg);
+      scene.fog.color.setHex(p.bg);
+      sunLight.color.setHex(p.sunColor);
+      sunLight.intensity = p.sunInt;
+      ambientLight.intensity = p.ambInt;
+      if (headlightSpot) headlightSpot.intensity = p.spotInt;
+    });
+
+    // Mobile Touch Bindings
+    function bindTouch(id, keyName) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('touchstart', (e) => { e.preventDefault(); state.keys[keyName] = true; });
+      el.addEventListener('touchend', (e) => { e.preventDefault(); state.keys[keyName] = false; });
+    }
+    bindTouch('touch-up', 'up');
+    bindTouch('touch-down', 'down');
+    bindTouch('touch-left', 'left');
+    bindTouch('touch-right', 'right');
+    bindTouch('touch-drift', 'space');
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ============================================================================
+    // 13. INITIALIZATION & MAIN RENDER LOOP
+    // ============================================================================
+    window.onload = function () {
+      generateDioramaChunk();
+      syncLiveOSMData();
+
+      let lastTime = performance.now() / 1000;
+      function animate() {
+        requestAnimationFrame(animate);
+        const now = performance.now() / 1000;
+        const dt = Math.min(0.05, now - lastTime);
+        lastTime = now;
+
+        updateSimulation(dt, now);
+        updateHUDAndRadar();
+        renderer.render(scene, camera);
+      }
+      animate();
+    };
+  </script>
+</body>
+</html>
