@@ -113,5 +113,5 @@ export function writeCoopQuery(code: string | null, asTv = false): void {
 
 export function coopShareUrl(code: string): string {
   const base = typeof location !== 'undefined' ? location.origin : 'https://pillion.ibm.io';
-  return `${base}/gun.html?coop=${encodeURIComponent(code)}`;
+  return `${base}/gun?coop=${encodeURIComponent(code)}`;
 }

@@ -8,7 +8,7 @@ if (!app) throw new Error('#app root missing');
 // Phone gunner links should open the light controller, not the full TV diorama.
 const coop = parseCoopQuery();
 if (coop && !new URLSearchParams(location.search).has('tv')) {
-  location.replace(`/gun.html?coop=${encodeURIComponent(coop)}`);
+  location.replace(`/gun?coop=${encodeURIComponent(coop)}`);
 } else try {
   new GameApp(app);
 } catch (err) {

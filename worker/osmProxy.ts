@@ -48,7 +48,7 @@ export default {
 
     if (url.pathname === '/api/coop/new') {
       const code = newRoomCode();
-      return json({ code, join: `/?coop=${code}` }, 200, request);
+      return json({ code, join: `/gun?coop=${code}` }, 200, request);
     }
 
     if (url.pathname === '/api/coop/ws') {
