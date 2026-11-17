@@ -1,6 +1,12 @@
 import './styles/main.css';
 import { GameApp } from './game/GameApp';
 import { parseCoopQuery } from './net/coopProtocol';
+import { installErrorReporting } from './core/errorReporting';
+
+installErrorReporting('tv');
+if ('serviceWorker' in navigator) {
+  void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+}
 
 const app = document.querySelector<HTMLDivElement>('#app');
 if (!app) throw new Error('#app root missing');

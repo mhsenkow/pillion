@@ -1,12 +1,37 @@
 import * as THREE from 'three';
 import { GRID_L, GRID_W, TILE } from '../core/constants';
-import type { ZombieEntity } from '../core/types';
+import type { BuildingClass, ZombieEntity } from '../core/types';
 import { gridToWorld, idx, worldToGrid } from '../geo/voxelizer';
+
+export type StructureMaterial = 'wood' | 'brick' | 'concrete';
+
+export interface CollapseEvent {
+  gx: number;
+  gz: number;
+  wx: number;
+  wz: number;
+  scrap: number;
+  voxelCount: number;
+  material: StructureMaterial;
+  footprintId: number;
+}
 
 interface VoxelRef {
   mesh: THREE.InstancedMesh;
   index: number;
   y: number;
+}
+
+interface CellMeta {
+  material: StructureMaterial;
+  footprintId: number;
+  voxelCount: number;
+}
+
+interface Footprint {
+  cells: number[];
+  groundGone: number;
+  rubble: number;
 }
 
 interface Flame {
@@ -15,6 +40,7 @@ interface Flame {
   life: number;
   nextSpread: number;
   sprite: THREE.Sprite;
+  material: StructureMaterial;
 }
 
 const _m = new THREE.Matrix4();
@@ -24,20 +50,83 @@ const _s = new THREE.Vector3();
 const _color = new THREE.Color();
 const _dummy = new THREE.Object3D();
 
+const FIRE_SPREAD: Record<StructureMaterial, number> = {
+  wood: 0.34,
+  brick: 0.54,
+  concrete: 0.82,
+};
+
+const FIRE_LIFE: Record<StructureMaterial, number> = {
+  wood: 2.15,
+  brick: 2.75,
+  concrete: 3.35,
+};
+
+export function materialFromBuildingClass(cls: BuildingClass): StructureMaterial {
+  switch (cls) {
+    case 'church':
+    case 'retail':
+    case 'garage':
+      return 'wood';
+    case 'school':
+    case 'apartments':
+      return 'brick';
+    case 'industrial':
+      return 'concrete';
+    default:
+      return 'brick';
+  }
+}
+
+export function materialFromVoxelColor(hex: number): StructureMaterial {
+  const r = (hex >> 16) & 255;
+  const g = (hex >> 8) & 255;
+  const b = hex & 255;
+  if (r > 140 && g < 110) return 'wood';
+  if (r + g + b < 200) return 'concrete';
+  return 'brick';
+}
+
+export function scrapForBuildingSize(voxelCount: number, material: StructureMaterial): number {
+  const base = Math.max(1, Math.floor(voxelCount * 0.35));
+  const mul = material === 'wood' ? 0.85 : material === 'brick' ? 1 : 1.25;
+  return Math.min(48, Math.max(2, Math.round(base * mul)));
+}
+
+function footprintCollapseRatio(fp: Footprint): number {
+  if (!fp.cells.length) return 0;
+  return fp.rubble / fp.cells.length;
+}
+
 /** Building voxels for the block on screen. Breach opens a column. Firebomb opens a hole and the rest burns down. */
 export class StructureField {
   private cells = new Map<number, VoxelRef[]>();
+  private meta = new Map<number, CellMeta>();
+  private footprints = new Map<number, Footprint>();
+  private nextFootprintId = 1;
   private flames: Flame[] = [];
   private key = '';
   private flameMap: THREE.Texture | null = null;
   private light = new THREE.PointLight(0xf97316, 0, 9, 1.6);
   private dirtyMeshes = new Set<THREE.InstancedMesh>();
+  private pendingScrap = 0;
+  private recentCollapses: CollapseEvent[] = [];
 
-  bind(group: THREE.Group, surface: Uint8Array, chunkKey: string): void {
+  bind(
+    group: THREE.Group,
+    surface: Uint8Array,
+    chunkKey: string,
+    materialHint?: Map<number, StructureMaterial>,
+  ): void {
     if (this.key === chunkKey && this.cells.size > 0) return;
     this.clearFlames();
     this.key = chunkKey;
     this.cells.clear();
+    this.meta.clear();
+    this.footprints.clear();
+    this.nextFootprintId = 1;
+    this.pendingScrap = 0;
+    this.recentCollapses = [];
     group.traverse((obj) => {
       const mesh = obj as THREE.InstancedMesh;
       if (!mesh.isInstancedMesh) return;
@@ -52,8 +141,37 @@ export class StructureField {
         const list = this.cells.get(cell) ?? [];
         list.push({ mesh, index: i, y: _p.y });
         this.cells.set(cell, list);
+        if (!this.meta.has(cell)) {
+          let colorHex = 0x57534e;
+          if (mesh.instanceColor) {
+            mesh.getColorAt(i, _color);
+            colorHex = _color.getHex();
+          }
+          this.meta.set(cell, {
+            material: materialHint?.get(cell) ?? materialFromVoxelColor(colorHex),
+            footprintId: -1,
+            voxelCount: 0,
+          });
+        }
       }
     });
+    for (const [cell, refs] of this.cells) {
+      const m = this.meta.get(cell);
+      if (m) m.voxelCount = refs.length;
+    }
+    this.assignFootprints(surface);
+  }
+
+  takePendingScrap(): number {
+    const s = this.pendingScrap;
+    this.pendingScrap = 0;
+    return s;
+  }
+
+  drainCollapseEvents(): CollapseEvent[] {
+    const out = this.recentCollapses;
+    this.recentCollapses = [];
+    return out;
   }
 
   chip(wx: number, wz: number, surface: Uint8Array, height: Uint8Array): number {
@@ -116,8 +234,8 @@ export class StructureField {
       this.flicker(idx(flame.gx, flame.gz), flame.life);
       if (Math.hypot(wx - bike.x, wz - bike.z) < 0.9) touchingBike = true;
       if (flame.nextSpread <= 0 && this.flames.length < 18) {
-        flame.nextSpread = 0.5;
-        this.spread(flame.gx, flame.gz, surface, parent);
+        flame.nextSpread = FIRE_SPREAD[flame.material];
+        this.spread(flame.gx, flame.gz, surface, parent, flame.material);
       }
       if (flame.life <= 0) {
         if (this.collapse(flame.gx, flame.gz, surface, height)) fell++;
@@ -147,7 +265,30 @@ export class StructureField {
     return fell;
   }
 
-  private spread(gx: number, gz: number, surface: Uint8Array, parent: THREE.Object3D): void {
+  private assignFootprints(surface: Uint8Array): void {
+    const seen = new Set<number>();
+    for (const cell of this.cells.keys()) {
+      if (seen.has(cell)) continue;
+      const gx = cell % GRID_W;
+      const gz = Math.floor(cell / GRID_W);
+      const id = this.nextFootprintId++;
+      const fp: Footprint = { cells: [], groundGone: 0, rubble: 0 };
+      const queue = [{ gx, gz }];
+      while (queue.length) {
+        const { gx: x, gz: z } = queue.pop()!;
+        const c = idx(x, z);
+        if (seen.has(c) || surface[c] !== TILE.BUILDING || !this.cells.has(c)) continue;
+        seen.add(c);
+        fp.cells.push(c);
+        const meta = this.meta.get(c);
+        if (meta) meta.footprintId = id;
+        queue.push({ gx: x + 1, gz: z }, { gx: x - 1, gz: z }, { gx: x, gz: z + 1 }, { gx: x, gz: z - 1 });
+      }
+      if (fp.cells.length) this.footprints.set(id, fp);
+    }
+  }
+
+  private spread(gx: number, gz: number, surface: Uint8Array, parent: THREE.Object3D, from: StructureMaterial): void {
     const options: [number, number][] = [
       [gx + 1, gz],
       [gx - 1, gz],
@@ -157,7 +298,8 @@ export class StructureField {
     const open = options.filter(([x, z]) => this.canBurn(x, z, surface));
     if (!open.length) return;
     const [nx, nz] = open[Math.floor(Math.random() * open.length)];
-    this.ignite(nx, nz, surface, parent);
+    const neighbor = this.meta.get(idx(nx, nz))?.material ?? from;
+    this.ignite(nx, nz, surface, parent, neighbor);
   }
 
   private canBurn(gx: number, gz: number, surface: Uint8Array): boolean {
@@ -167,19 +309,30 @@ export class StructureField {
     return !this.flames.some((flame) => flame.gx === gx && flame.gz === gz);
   }
 
-  private ignite(gx: number, gz: number, surface: Uint8Array, parent: THREE.Object3D): void {
+  private ignite(gx: number, gz: number, surface: Uint8Array, parent: THREE.Object3D, material?: StructureMaterial): void {
     if (!this.canBurn(gx, gz, surface) || this.flames.length >= 18) return;
+    const cell = idx(gx, gz);
+    const mat = material ?? this.meta.get(cell)?.material ?? 'brick';
     const { wx, wz } = gridToWorld(gx, gz);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: this.flameTexture(),
-      transparent: true,
-      depthWrite: false,
-      color: 0xfff1d6,
-    }));
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: this.flameTexture(),
+        transparent: true,
+        depthWrite: false,
+        color: mat === 'wood' ? 0xfff1d6 : mat === 'brick' ? 0xfed7aa : 0xe7e5e4,
+      }),
+    );
     sprite.position.set(wx, 1.2, wz);
     sprite.scale.set(1.15, 1.7, 1);
     parent.add(sprite);
-    this.flames.push({ gx, gz, life: 2.6, nextSpread: 0.45, sprite });
+    this.flames.push({
+      gx,
+      gz,
+      life: FIRE_LIFE[mat],
+      nextSpread: FIRE_SPREAD[mat],
+      sprite,
+      material: mat,
+    });
   }
 
   private collapse(gx: number, gz: number, surface: Uint8Array, height: Uint8Array): boolean {
@@ -188,6 +341,7 @@ export class StructureField {
     if (surface[cell] !== TILE.BUILDING) return false;
     const refs = this.cells.get(cell);
     if (!refs?.length) return false;
+    const meta = this.meta.get(cell);
     refs.sort((a, b) => a.y - b.y);
     refs.forEach((ref, index) => {
       ref.mesh.getMatrixAt(ref.index, _m);
@@ -210,7 +364,41 @@ export class StructureField {
     surface[cell] = TILE.RUBBLE;
     height[cell] = 1;
     this.cells.delete(cell);
+
+    const material = meta?.material ?? 'brick';
+    const voxelCount = meta?.voxelCount ?? refs.length;
+    const scrap = scrapForBuildingSize(voxelCount, material);
+    this.pendingScrap += scrap;
+
+    const { wx, wz } = gridToWorld(gx, gz);
+    const footprintId = meta?.footprintId ?? -1;
+    this.recentCollapses.push({ gx, gz, wx, wz, scrap, voxelCount, material, footprintId });
+
+    if (footprintId >= 0) {
+      const fp = this.footprints.get(footprintId);
+      if (fp) {
+        fp.groundGone++;
+        fp.rubble++;
+        this.maybeCascadeFootprint(footprintId, surface, height);
+      }
+    }
+    this.meta.delete(cell);
     return true;
+  }
+
+  private maybeCascadeFootprint(footprintId: number, surface: Uint8Array, height: Uint8Array): void {
+    const fp = this.footprints.get(footprintId);
+    if (!fp) return;
+    const minGround = Math.max(2, Math.ceil(fp.cells.length * 0.28));
+    const ratioTrigger = footprintCollapseRatio(fp) >= 0.52;
+    const groundTrigger = fp.groundGone >= minGround;
+    if (!ratioTrigger && !groundTrigger) return;
+    for (const cell of [...fp.cells]) {
+      if (surface[cell] !== TILE.BUILDING) continue;
+      const gx = cell % GRID_W;
+      const gz = Math.floor(cell / GRID_W);
+      this.collapse(gx, gz, surface, height);
+    }
   }
 
   private flicker(cell: number, life: number): void {

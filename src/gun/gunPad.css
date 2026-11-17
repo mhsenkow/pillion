@@ -266,3 +266,95 @@ body,
   color: var(--pad-mute);
   line-height: 1.4;
 }
+
+.gun-tutorial {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 8, 14, 0.88);
+  padding: 20px;
+}
+.gun-tutorial.hidden { display: none; }
+.gun-tutorial-card {
+  width: min(360px, 92vw);
+  background: #111827;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 18px;
+  padding: 22px;
+  text-align: center;
+}
+.gun-tutorial-card h2 { margin: 0 0 8px; }
+.gun-tutorial-card input[type="text"],
+.gun-tutorial-card input:not([type="color"]) {
+  width: 100%;
+  margin: 8px 0;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: #0b1220;
+  color: #e2e8f0;
+  font: 700 16px JetBrains Mono, monospace;
+}
+.gun-rtt { display: none; color: #fb7185; font-size: 11px; margin-top: 6px; }
+.gun-rtt.show { display: block; }
+.gun-threat {
+  position: fixed;
+  top: 40%;
+  font: 700 14px JetBrains Mono, monospace;
+  color: #fb7185;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.gun-threat.show { opacity: 1; }
+.gun-threat.left { left: 8px; }
+.gun-threat.right { right: 8px; }
+.gun-heat {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+.gun-heat-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #22d3ee, #fbbf24, #fb7185);
+  transition: width 0.05s linear;
+}
+.gun-btn.special {
+  flex: 0 0 auto;
+  min-width: 96px;
+  border-color: rgba(167, 139, 250, 0.5);
+  color: #ddd6fe;
+}
+.gun-shell.a11y .gun-btn {
+  min-height: 56px;
+  font-size: 14px;
+  border-width: 2px;
+  border-color: #fff;
+}
+.gun-shell.a11y {
+  filter: contrast(1.25);
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .gun-shell {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: 8px;
+  }
+  .gun-banner h1 { font-size: 18px; }
+  .gun-banner p { display: none; }
+  .gun-stage {
+    grid-template-columns: 1fr 1.2fr;
+  }
+  .gun-controls { gap: 6px; }
+}
+
+@media (min-width: 768px) {
+  .gun-shell { max-width: 900px; margin: 0 auto; }
+  .gun-btn { min-height: 52px; font-size: 13px; }
+  .gun-aim { min-height: 320px; }
+}

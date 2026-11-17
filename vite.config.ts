@@ -100,6 +100,14 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         gun: resolve(__dirname, 'gun.html'),
+        join: resolve(__dirname, 'join.html'),
+      },
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/three')) return 'three';
+          if (id.includes('src/geo/voxelizer')) return 'voxelizer';
+          if (id.includes('src/ui/HudController')) return 'hud';
+        },
       },
     },
   },

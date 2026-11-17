@@ -1,11 +1,14 @@
 import type { Plugin } from 'vite';
 import type { IncomingMessage } from 'http';
-import { WebSocketServer, type WebSocket } from 'ws';
+import { WebSocketServer, type WebSocket, type RawData } from 'ws';
 import { newRoomCode, type CoopRole } from './src/net/coopProtocol';
 
 interface Seat {
   role: CoopRole;
   socket: WebSocket;
+  seatId?: string;
+  name?: string;
+  color?: string;
 }
 
 interface LocalRoom {
@@ -22,10 +25,10 @@ export function coopDevProxy(): Plugin {
       server.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith('/api/coop/new')) return next();
         const code = newRoomCode();
-        rooms.set(code, { seats: [] });
+        rooms.set(code.toLowerCase(), { seats: [] });
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ code, join: `/?coop=${code}` }));
+        res.end(JSON.stringify({ code, join: `/gun?coop=${code}` }));
       });
 
       const wss = new WebSocketServer({ noServer: true });
@@ -41,17 +44,54 @@ export function coopDevProxy(): Plugin {
         wss.handleUpgrade(req as IncomingMessage, socket, head, (ws) => {
           const room = rooms.get(code)!;
           const wanted = (url.searchParams.get('role') || 'auto') as CoopRole | 'auto';
-          const role = assignRole(room, wanted);
+          const seatId = url.searchParams.get('seat') || '';
+          const name = (url.searchParams.get('name') || '').slice(0, 16);
+          const color = (url.searchParams.get('color') || '#38bdf8').slice(0, 16);
+          const role = assignRole(room, wanted, seatId);
           if (!role) {
             ws.close(4000, 'ride_full');
             return;
           }
-          const seat: Seat = { role, socket: ws };
+          const seat: Seat = { role, socket: ws, seatId, name, color };
           room.seats.push(seat);
           ws.send(JSON.stringify({ t: 'welcome', role, code, peers: room.seats.length }));
-          broadcast(room, { t: 'peer', role, online: true, peers: room.seats.length }, ws);
-          ws.on('message', (data) => {
+          broadcast(
+            room,
+            { t: 'peer', role, online: true, peers: room.seats.length, name, color },
+            ws,
+          );
+          if (role === 'gunner') {
+            broadcast(
+              room,
+              {
+                t: 'evt',
+                kind: 'join',
+                text: `${(name || 'GUNNER').toUpperCase()} JOINED · GUNNER`,
+                at: Date.now() / 1000,
+              },
+              ws,
+            );
+          }
+          ws.on('message', (data: RawData, isBinary) => {
+            if (isBinary) {
+              const buf = data instanceof Buffer ? data : Buffer.from(data as ArrayBuffer);
+              for (const peer of room.seats) {
+                if (peer.socket === ws) continue;
+                if (seat.role === 'driver' && peer.role === 'gunner') peer.socket.send(buf);
+                if (seat.role === 'gunner' && peer.role === 'driver') peer.socket.send(buf);
+              }
+              return;
+            }
             const text = typeof data === 'string' ? data : data.toString();
+            try {
+              const parsed = JSON.parse(text) as { t?: string; at?: number };
+              if (parsed.t === 'hb') {
+                ws.send(JSON.stringify({ t: 'hb', at: Date.now() / 1000, echo: parsed.at }));
+                return;
+              }
+            } catch {
+              /* forward */
+            }
             for (const peer of room.seats) {
               if (peer.socket === ws) continue;
               if (seat.role === 'driver' && peer.role === 'gunner') peer.socket.send(text);
@@ -60,7 +100,14 @@ export function coopDevProxy(): Plugin {
           });
           ws.on('close', () => {
             room.seats = room.seats.filter((s) => s.socket !== ws);
-            broadcast(room, { t: 'peer', role, online: false, peers: room.seats.length });
+            broadcast(room, {
+              t: 'peer',
+              role,
+              online: false,
+              peers: room.seats.length,
+              name,
+              color,
+            });
             if (!room.seats.length) rooms.delete(code);
           });
         });
@@ -69,7 +116,19 @@ export function coopDevProxy(): Plugin {
   };
 }
 
-function assignRole(room: LocalRoom, wanted: CoopRole | 'auto'): CoopRole | null {
+function assignRole(room: LocalRoom, wanted: CoopRole | 'auto', seatId: string): CoopRole | null {
+  if (wanted === 'gunner' && seatId) {
+    const existing = room.seats.find((s) => s.role === 'gunner' && s.seatId === seatId);
+    if (existing) {
+      try {
+        existing.socket.close(4000, 'reseat');
+      } catch {
+        /* ignore */
+      }
+      room.seats = room.seats.filter((s) => s !== existing);
+      return 'gunner';
+    }
+  }
   const taken = new Set(room.seats.map((s) => s.role));
   if (wanted === 'driver' || wanted === 'gunner') {
     if (taken.has(wanted)) return null;

@@ -9,12 +9,16 @@
     "preview": "vite preview",
     "deploy": "npm run build && wrangler deploy",
     "deploy:dry": "npm run build && wrangler deploy --dry-run",
-    "check": "node scripts/minute-playtest.mjs"
+    "check": "node scripts/minute-playtest.mjs",
+    "test:coop": "node scripts/coop-binary-test.mjs",
+    "test:playwright": "node scripts/playwright-coop.mjs"
   },
   "dependencies": {
+    "qrcode": "^1.5.4",
     "three": "^0.170.0"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "@types/three": "^0.170.0",
     "@types/ws": "^8.18.2",
     "typescript": "~5.6.3",

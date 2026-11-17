@@ -4,6 +4,7 @@
 import { buildOverpassQueryFromBBox } from '../src/geo/overpassQuery';
 import { bboxFromCenter, padBBox, type GeoBBox } from '../src/geo/projection';
 import { newRoomCode } from '../src/net/coopProtocol';
+import { osmOverpassCacheKey, OverpassMemoryCache } from './osmCacheKv';
 import { RideRoom } from './rideRoom';
 
 export { RideRoom };
@@ -11,7 +12,11 @@ export { RideRoom };
 export interface Env {
   ASSETS: Fetcher;
   RIDE_ROOMS: DurableObjectNamespace<RideRoom>;
+  /** Optional KV namespace for Overpass JSON blobs (key: osm:v1:{bboxKey}) */
+  OSM_CACHE?: KVNamespace;
 }
+
+const overpassMemory = new OverpassMemoryCache();
 
 const MIRRORS = [
   'https://overpass.openstreetmap.fr/api/interpreter',
@@ -46,6 +51,16 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
+    if (url.pathname === '/api/errors' && request.method === 'POST') {
+      try {
+        const body = await request.json();
+        console.log('client_error', JSON.stringify(body));
+      } catch {
+        /* ignore */
+      }
+      return json({ ok: true }, 200, request);
+    }
+
     if (url.pathname === '/api/coop/new') {
       const code = newRoomCode();
       return json({ code, join: `/gun?coop=${code}` }, 200, request);
@@ -74,12 +89,54 @@ export default {
         return json({ error: 'lat/lon or s,w,n,e required' }, 400, request);
       }
 
+      const cacheKey = osmOverpassCacheKey(bbox);
+
+      if (env.OSM_CACHE) {
+        try {
+          const cached = await env.OSM_CACHE.get(cacheKey);
+          if (cached) {
+            return new Response(cached, {
+              status: 200,
+              headers: {
+                ...corsHeaders(request),
+                'Content-Type': 'application/json; charset=utf-8',
+                'Cache-Control': 'public, max-age=3600',
+                'X-Osm-Cache': 'kv',
+              },
+            });
+          }
+        } catch {
+          /* fall through */
+        }
+      }
+
+      const memHit = overpassMemory.get(cacheKey);
+      if (memHit) {
+        return new Response(memHit, {
+          status: 200,
+          headers: {
+            ...corsHeaders(request),
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'public, max-age=3600',
+            'X-Osm-Cache': 'memory',
+          },
+        });
+      }
+
       const upstream = await fetchOverpass(buildOverpassQueryFromBBox(bbox));
       if (!upstream) {
         return json({ error: 'overpass_unavailable', elements: [] }, 502, request);
       }
 
       const body = await upstream.text();
+      overpassMemory.set(cacheKey, body);
+      if (env.OSM_CACHE) {
+        try {
+          await env.OSM_CACHE.put(cacheKey, body, { expirationTtl: 3600 });
+        } catch {
+          /* ignore */
+        }
+      }
       return new Response(body, {
         status: 200,
         headers: {

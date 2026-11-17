@@ -31,6 +31,9 @@ export interface HudCallbacks {
   onMute?: () => void;
   onShareRide?: () => void;
   onAutoFire?: () => void;
+  onCinema?: () => void;
+  onPhotoMode?: () => void;
+  onSetDestination?: (q: string) => void;
 }
 
 type PanelId = 'nav' | 'vitals' | 'loadout' | 'radar';
@@ -117,6 +120,10 @@ export class HudController {
       <div style="display:flex;gap:6px;margin-bottom:6px">
         <input id="input-place" type="text" placeholder="Search any place..." style="flex:1" />
         <button class="hud-btn" id="btn-find" style="background:#06b6d4;color:#0f172a">FIND</button>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <input id="input-dest" type="text" placeholder="Road trip to Detroit / Chicago…" style="flex:1" />
+        <button class="hud-btn" id="btn-dest" style="background:#a78bfa;color:#0f172a">GO</button>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:8px">
         <input id="input-lat" type="number" step="0.0001" value="42.9906" style="width:50%" />
@@ -220,8 +227,14 @@ export class HudController {
       <div class="hud-chrome">
         <button type="button" class="hud-btn" id="btn-hide-menus" title="Hide or show all HUD panels">HIDE MENUS [H]</button>
         <button type="button" class="hud-btn" id="btn-share-ride" title="Copy a phone gunner link. Cast this screen to the TV; they only get a controller.">SHARE PHONE GUN</button>
+        <button type="button" class="hud-btn" id="btn-cinema" title="Cinema mode">CINEMA</button>
+        <button type="button" class="hud-btn" id="btn-photo" title="Photo mode">PHOTO</button>
         <span id="coop-status" class="mono" style="font-size:9px;color:#7dd3fc;margin-left:8px"></span>
       </div>
+      <div id="tv-subtitle" class="tv-subtitle mono"></div>
+      <div id="dest-hud" class="dest-hud mono hidden"></div>
+      <div id="town-card" class="town-card hidden"></div>
+      <div id="gunner-badge" class="mono" style="position:fixed;bottom:18%;left:50%;transform:translateX(-50%);z-index:22;font-size:12px;color:#7dd3fc;opacity:0;transition:opacity .3s"></div>
 
       ${this.dock('nav', 'NAV', 'top:12px;left:12px', navBody, 'width:min(94vw,380px)')}
       ${this.dock('vitals', 'VITALS', 'top:12px;right:12px', vitalsBody, 'width:min(280px,90vw)')}
@@ -322,6 +335,17 @@ export class HudController {
     this.$('#btn-aim').addEventListener('click', () => this.cbs.onAimMode());
     this.$('#btn-autofire').addEventListener('click', () => this.cbs.onAutoFire?.());
     this.$('#btn-share-ride').addEventListener('click', () => this.cbs.onShareRide?.());
+    this.$('#btn-cinema')?.addEventListener('click', () => this.cbs.onCinema?.());
+    this.$('#btn-photo')?.addEventListener('click', () => this.cbs.onPhotoMode?.());
+    this.$('#btn-dest')?.addEventListener('click', () =>
+      this.cbs.onSetDestination?.((this.$('#input-dest') as HTMLInputElement).value),
+    );
+    this.$('#input-dest')?.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if ((e as KeyboardEvent).key === 'Enter') {
+        this.cbs.onSetDestination?.((e.target as HTMLInputElement).value);
+      }
+    });
     this.$('#slider-dof').addEventListener('input', (e) => this.cbs.onDof(parseFloat((e.target as HTMLInputElement).value)));
     this.$('#slider-pitch').addEventListener('input', (e) => this.cbs.onPitch(parseFloat((e.target as HTMLInputElement).value)));
     this.$('#btn-flow').addEventListener('click', () => this.cbs.onFlowDebug());
@@ -665,6 +689,53 @@ export class HudController {
   setShareRideLabel(text: string): void {
     const btn = this.$('#btn-share-ride');
     if (btn) btn.textContent = text;
+  }
+
+  setSubtitle(text: string): void {
+    const el = this.$('#tv-subtitle');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.toggle('show', !!text);
+    if (text) {
+      clearTimeout((el as HTMLElement & { _t?: number })._t);
+      (el as HTMLElement & { _t?: number })._t = window.setTimeout(() => {
+        el.classList.remove('show');
+      }, 2800);
+    }
+  }
+
+  setDestHud(text: string | null): void {
+    const el = this.$('#dest-hud');
+    if (!el) return;
+    if (!text) {
+      el.classList.add('hidden');
+      return;
+    }
+    el.classList.remove('hidden');
+    el.textContent = text;
+  }
+
+  showTownCard(headline: string, sub: string): void {
+    const el = this.$('#town-card');
+    if (!el) return;
+    el.innerHTML = `<strong>${headline}</strong><span>${sub}</span>`;
+    el.classList.remove('hidden');
+    clearTimeout((el as HTMLElement & { _t?: number })._t);
+    (el as HTMLElement & { _t?: number })._t = window.setTimeout(() => el.classList.add('hidden'), 4200);
+  }
+
+  setGunnerBadge(name: string, color: string): void {
+    const el = this.$('#gunner-badge');
+    if (!el) return;
+    el.textContent = `${name.toUpperCase()} · GUNNER`;
+    el.style.color = color;
+    el.style.opacity = '1';
+  }
+
+  enableTvHud(): void {
+    this.root.classList.add('tv-hud');
+    this.menusHidden = true;
+    this.applyPanelState();
   }
 
   setWeapon(i: number): void {

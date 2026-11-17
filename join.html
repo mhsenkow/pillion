@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0d12" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>PILLION · Join ride</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet" />
+    <style>
+      html, body { margin: 0; height: 100%; background: #0b0d12; color: #e2e8f0; font-family: Space Grotesk, system-ui, sans-serif; }
+      .wrap { min-height: 100%; display: grid; place-content: center; padding: 24px; gap: 16px; text-align: center; }
+      h1 { margin: 0; font-size: 28px; }
+      p { color: #94a3b8; margin: 0; }
+      input { font: 700 28px JetBrains Mono, monospace; letter-spacing: 0.2em; text-align: center; text-transform: uppercase; padding: 14px 18px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); background: #111827; color: #fde68a; width: min(280px, 80vw); }
+      button { margin-top: 8px; font: 700 14px JetBrains Mono, monospace; padding: 14px 22px; border-radius: 14px; border: 1px solid rgba(125,211,252,0.5); background: rgba(14,116,144,0.35); color: #e0f2fe; }
+      .err { color: #fb7185; min-height: 1.2em; font-family: JetBrains Mono, monospace; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Join the ride</h1>
+      <p>Type the code on the TV</p>
+      <input id="code" maxlength="8" autocomplete="off" autocapitalize="characters" placeholder="CODE" />
+      <button id="go" type="button">BE THE GUNNER</button>
+      <div class="err" id="err"></div>
+    </div>
+    <script type="module">
+      const input = document.getElementById('code');
+      const err = document.getElementById('err');
+      const go = () => {
+        const code = String(input.value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (code.length < 3) { err.textContent = 'Need the code from the TV'; return; }
+        location.href = `/gun?coop=${encodeURIComponent(code)}`;
+      };
+      document.getElementById('go').addEventListener('click', go);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      input.focus();
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+      }
+    </script>
+  </body>
+</html>

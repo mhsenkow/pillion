@@ -57,9 +57,12 @@ import { DevModelInspector } from '../ui/DevModelInspector';
 import { gameAudio } from '../audio/GameAudio';
 import { createLootMesh, LOOT_CRATE_GEO } from '../simulation/lootHelpers';
 import { StructureField } from '../simulation/structureDamage';
+import { DebrisField } from '../simulation/debris';
+import { SmokeField } from '../simulation/smoke';
 import { CoopClient } from '../net/coopClient';
 import {
   coopShareUrl,
+  isTvMode,
   parseCoopQuery,
   writeCoopQuery,
   type CoopGunInput,
@@ -69,6 +72,21 @@ import {
 } from '../net/coopProtocol';
 import { installRideInput } from './bindRideInput';
 import { ChunkMeshCache, type ChunkSnap } from './chunkCache';
+import { TvLobby } from '../ui/TvLobby';
+import { installTvMode, setCinemaMode, setPhotoMode } from './tvMode';
+import { sampleGamepad, rumbleGamepad } from './gamepadDriver';
+import { assistAim } from './aimAssist';
+import { RoadTrip } from '../trip/RoadTrip';
+import { fetchWeather } from '../trip/weather';
+import { getDayPhase } from '../trip/dayNight';
+import { flags } from '../core/flags';
+import { groundTrails } from '../render/trails';
+import { applyPostFxToBundle, loadPostFxFlags } from '../render/postFx';
+import { hordeCountFromBuildings, generateTownBeats, coopDoubleKillBonus, bossSpawnPlan } from './townBeats';
+import { defaultUpgradeLevels } from './upgrades';
+import type { TownBeat } from './townBeats';
+import { detectLandmarksInOsmData } from '../geo/landmarks';
+import { fetchElevation } from '../geo/elevation';
 
 // Re-export helper shim used below
 function ensureFreeBike(state: GameState): void {
@@ -126,6 +144,23 @@ export class GameApp {
   private remoteGunAt = 0;
   private remoteZombies: CoopZombieSnap[] = [];
   private lastHostDropKey = '';
+  private lobby: TvLobby | null = null;
+  private cinema = false;
+  private photoMode = false;
+  private photoOrbit = 0;
+  private trip = new RoadTrip();
+  private debris = new DebrisField();
+  private smoke = new SmokeField();
+  private laserLine: THREE.Line | null = null;
+  private gunnerName = 'Gunner';
+  private gunnerColor = '#38bdf8';
+  private frameMsEma = 16;
+  private lastFrameAt = 0;
+  private weatherTimer = 0;
+  private townBeats: TownBeat[] = [];
+  private upgrades = defaultUpgradeLevels();
+  private impactFlashes: { x: number; z: number; life: number }[] = [];
+  private perfHud: HTMLElement | null = null;
 
   constructor(appRoot: HTMLElement) {
     this.canvasEl = document.createElement('div');
@@ -227,10 +262,26 @@ export class GameApp {
     this.bindInput();
     this.startLoop();
     this.hud.setAutoFireLabel(this.state.partner.autoFire);
+    this.lobby = new TvLobby(appRoot);
+    this.trip = RoadTrip.loadFromStorage();
+    this.trip.setBikePosition(this.state.baseLat, this.state.baseLon);
+    applyPostFxToBundle(this.bundle, loadPostFxFlags());
+    if (installTvMode()) {
+      this.hud.enableTvHud();
+    }
+    this.ensureLaser();
+    if (import.meta.env.DEV) {
+      this.perfHud = document.createElement('div');
+      this.perfHud.className = 'mono';
+      this.perfHud.style.cssText =
+        'position:fixed;bottom:8px;left:8px;z-index:50;font-size:10px;color:#86efac;background:rgba(0,0,0,0.55);padding:4px 8px;border-radius:6px';
+      appRoot.appendChild(this.perfHud);
+    }
     const coopCode = parseCoopQuery();
-    const tvSeat = new URLSearchParams(location.search).has('tv');
+    const tvSeat = isTvMode() || new URLSearchParams(location.search).has('tv');
     if (coopCode && tvSeat) {
       void this.joinCoop(coopCode, 'driver');
+      void this.lobby?.show(coopCode);
     } else if (urlDrop) {
       void reverseNominatim(urlDrop.lat, urlDrop.lon).then((name) => {
         this.state.locationName = name;
@@ -241,6 +292,17 @@ export class GameApp {
         this.hud.showToast('TIP: CAST THIS TO THE TV · SHARE RIDE SENDS MOM A PHONE GUN');
       }, 1800);
     }
+  }
+
+  private ensureLaser(): void {
+    if (this.laserLine) return;
+    const geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0.6, 0),
+      new THREE.Vector3(0, 0.6, -18),
+    ]);
+    const mat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85 });
+    this.laserLine = new THREE.Line(geo, mat);
+    this.bundle.entitiesGroup.add(this.laserLine);
   }
 
   private setupUi(appRoot: HTMLElement): void {
@@ -279,6 +341,18 @@ export class GameApp {
         this.hud.showToast(this.state.partner.autoFire ? 'AUTO FIRE ON' : 'AUTO FIRE OFF · HOLD CLICK');
       },
       onShareRide: () => void this.shareRide(),
+      onCinema: () => {
+        this.cinema = !this.cinema;
+        setCinemaMode(this.cinema);
+        this.hud.showToast(this.cinema ? 'CINEMA ON' : 'CINEMA OFF');
+      },
+      onPhotoMode: () => {
+        this.photoMode = !this.photoMode;
+        setPhotoMode(this.photoMode);
+        this.state.paused = this.photoMode;
+        this.hud.showToast(this.photoMode ? 'PHOTO MODE · ORBIT' : 'PHOTO OFF');
+      },
+      onSetDestination: (q) => void this.setRoadTrip(q),
       onDof: (v) => document.documentElement.style.setProperty('--tilt-blur', `${v}px`),
       onPitch: (v) => (this.state.cameraPitchDeg = v),
       onFlowDebug: () => {
@@ -477,6 +551,37 @@ export class GameApp {
     this.shownKills = -1;
     this.waveTimer = 0;
     this.spawnHorde(mulberry32(seed));
+    this.ensureLaser();
+    if (liveOsm) {
+      this.townBeats = generateTownBeats(
+        liveOsm,
+        this.state.baseLat,
+        this.state.baseLon,
+        this.state.chunkX,
+        this.state.chunkZ,
+      );
+      const beat = this.townBeats[0];
+      if (beat) {
+        this.hud.setSubtitle(beat.label);
+        this.state.objective = beat.label;
+      }
+      const card = this.trip.buildTownArrivalCard({
+        name: this.state.locationName.split(',')[0],
+        display_name: this.state.locationName,
+      });
+      this.hud.showTownCard(card.headline, card.subline);
+      this.trip.buildPostcard(this.state.kills, card.placeName, 'PILLION');
+      this.trip.save();
+      const marks = detectLandmarksInOsmData(liveOsm);
+      if (marks[0]) this.hud.setSubtitle(`LANDMARK · ${marks[0].kind.replace('_', ' ').toUpperCase()}`);
+      const boss = bossSpawnPlan(liveOsm.buildings.length, this.state.locationName, this.state.biomeHint);
+      if (boss.spawn) {
+        this.hud.pushKillFeed(`BOSS SIGNAL · ${boss.label || boss.kind.toUpperCase()}`);
+      }
+      void fetchElevation(this.state.baseLat, this.state.baseLon).then((el) => {
+        if (el != null) this.hud.setScale(`${scaleReadout()} · ${Math.round(el)}m elev`);
+      });
+    }
     this.refreshObjective();
     this.recomputeFlow();
     this.structures.bind(snap.group, this.state.surfaceGrid, snap.stamp);
@@ -861,7 +966,9 @@ export class GameApp {
     this.particles = [];
 
     const profile = this.biomeSpawnProfile();
-    const target = 5 + Math.floor(rng() * 3);
+    const buildingCount = this.state.activeOsm?.buildings?.length ?? 12;
+    const densityTarget = hordeCountFromBuildings(buildingCount, this.state.biomeHint);
+    const target = Math.max(4, Math.min(profile.target, densityTarget + Math.floor(rng() * 3)));
     const pending: {
       wx: number;
       wz: number;
@@ -1158,12 +1265,22 @@ export class GameApp {
         const code = await this.coop.createRoom();
         writeCoopQuery(code, true);
         this.coop.connect(code, 'driver');
+        void this.lobby?.show(code);
+        if (!isTvMode()) {
+          const url = new URL(location.href);
+          url.searchParams.set('tv', '1');
+          history.replaceState({}, '', url.toString());
+          installTvMode();
+          this.hud.enableTvHud();
+        }
       }
       const url = coopShareUrl(this.coop.roomCode);
       await navigator.clipboard.writeText(url);
       this.hud.setShareRideLabel('LINK COPIED');
-      this.hud.setCoopStatus(`TV DRIVER · ${this.coop.roomCode}`);
-      this.hud.showToast('PHONE LINK COPIED — SEND IT · THEY ONLY GET THE GUN PAD');
+      this.hud.setCoopStatus(`TV DRIVER · ${this.coop.roomCode.toUpperCase()}`);
+      this.hud.showToast('PHONE LINK COPIED — OR SCAN THE QR · /join ALSO WORKS');
+      this.hud.setSubtitle('SCAN TO BE THE GUNNER');
+      gameAudio.bark('Waiting for gunner');
       window.setTimeout(() => this.hud.setShareRideLabel('SHARE PHONE GUN'), 2400);
     } catch (err) {
       this.hud.showToast(err instanceof Error ? err.message.toUpperCase() : 'COULD NOT OPEN RIDE');
@@ -1174,7 +1291,38 @@ export class GameApp {
     if (!this.coop) this.coop = this.makeCoopClient();
     writeCoopQuery(code, preferred === 'driver');
     this.coop.connect(code, preferred);
-    this.hud.setCoopStatus(`JOINING ${code}…`);
+    this.hud.setCoopStatus(`JOINING ${code.toUpperCase()}…`);
+  }
+
+  private async setRoadTrip(q: string): Promise<void> {
+    if (!flags().roadTrip) return;
+    const query = q.trim();
+    if (!query) return;
+    const hit = await searchNominatim(query);
+    if (!hit) {
+      this.hud.showToast('DESTINATION NOT FOUND');
+      return;
+    }
+    const short = hit.name.split(',')[0] || query;
+    this.trip.setDest(short, hit.lat, hit.lon);
+    this.trip.save();
+    this.hud.showToast(`TRIP SET · ${short.toUpperCase()}`);
+    this.hud.setSubtitle(`HEADING TO ${short.toUpperCase()}`);
+    this.persistRideState();
+  }
+
+  private persistRideState(): void {
+    if (!this.coop?.connected || this.coopRole !== 'driver') return;
+    const dest = this.trip.getDestination();
+    this.coop.send({
+      t: 'state',
+      lat: this.state.baseLat,
+      lon: this.state.baseLon,
+      scrap: this.state.scrap,
+      kills: this.state.kills,
+      tripKm: this.trip.getOdometerMiles() * 1.60934,
+      destName: dest?.name,
+    });
   }
 
   private makeCoopClient(): CoopClient {
@@ -1182,19 +1330,35 @@ export class GameApp {
       onWelcome: (role, code, peers) => {
         this.coopRole = role;
         this.coopPeerOnline = peers > 1;
-        this.hud.setCoopStatus(role === 'driver' ? `TV DRIVER · ${code}` : `GUNNER · ${code}`);
+        this.hud.setCoopStatus(role === 'driver' ? `TV DRIVER · ${code.toUpperCase()}` : `GUNNER · ${code}`);
         this.hud.showToast(
           role === 'driver' ? 'TV IS THE RIDE · WAITING FOR PHONE GUNNER' : 'PHONE GUNNER SEATED',
         );
+        if (role === 'driver' && peers <= 1) void this.lobby?.show(code);
       },
-      onPeer: (role, online, peers) => {
+      onPeer: (role, online, peers, name, color) => {
         this.coopPeerOnline = peers > 1;
         if (role === 'gunner') {
-          this.hud.showToast(online ? 'PHONE GUNNER CONNECTED · THEY AIM ON THEIR SCREEN' : 'PHONE GUNNER LEFT');
+          if (online) {
+            this.gunnerName = name || 'Gunner';
+            this.gunnerColor = color || '#38bdf8';
+            this.lobby?.announceJoin(this.gunnerName, this.gunnerColor);
+            this.hud.setGunnerBadge(this.gunnerName, this.gunnerColor);
+            this.hud.setSubtitle(`${this.gunnerName.toUpperCase()} JOINED · GUNNER`);
+            this.hud.showToast(`${this.gunnerName.toUpperCase()} JOINED · GUNNER`);
+            gameAudio.bark(`${this.gunnerName} joined`);
+            if (this.laserLine) {
+              (this.laserLine.material as THREE.LineBasicMaterial).color.set(this.gunnerColor);
+            }
+          } else {
+            this.hud.showToast('PHONE GUNNER LEFT');
+            void this.lobby?.show(this.coop?.roomCode || '');
+          }
         }
         if (this.coopRole && this.coop) {
+          const away = this.coop.peerAway ? ' · AWAY' : '';
           this.hud.setCoopStatus(
-            `TV DRIVER · ${this.coop.roomCode}${peers > 1 ? ' · PHONE LIVE' : ' · SEND LINK'}`,
+            `TV DRIVER · ${this.coop.roomCode.toUpperCase()}${peers > 1 ? ' · PHONE LIVE' : ' · SEND LINK'}${away}`,
           );
         }
       },
@@ -1203,10 +1367,31 @@ export class GameApp {
         this.remoteGun = gun;
         this.remoteGunAt = performance.now() / 1000;
         this.coopPeerOnline = true;
+        if (gun.name) this.gunnerName = gun.name;
+        if (gun.color) {
+          this.gunnerColor = gun.color;
+          if (this.laserLine) {
+            (this.laserLine.material as THREE.LineBasicMaterial).color.set(gun.color);
+          }
+        }
+        if (gun.special) {
+          this.hud.setSubtitle('FLARE!');
+          this.shake = Math.max(this.shake, 0.35);
+          rumbleGamepad(200, 0.3, 0.5);
+        }
       },
       onDrop: () => undefined,
       onToast: (text) => this.hud.showToast(text),
       onStatus: (text) => this.hud.setCoopStatus(text),
+      onEvent: (evt) => {
+        this.hud.setSubtitle(evt.text);
+        if (evt.kind === 'blast' || evt.kind === 'building') rumbleGamepad(160);
+      },
+      onState: (state) => {
+        if (state.lat != null && this.coopRole === 'driver') {
+          /* TV host owns sim; ignore remote state overwrite */
+        }
+      },
     });
   }
 
@@ -1295,13 +1480,17 @@ export class GameApp {
   private publishCoop(now: number): void {
     if (!this.coop?.connected || this.coopRole !== 'driver') return;
     const gunnerListening = this.coopPeerOnline || this.phoneGunLive(now);
-    if (now - this.lastCoopSend < (gunnerListening ? 0.033 : 0.1)) return;
+    // Host snaps 20–30 Hz; phone aim streams separately at ~60 Hz
+    if (now - this.lastCoopSend < (gunnerListening ? 0.04 : 0.1)) return;
     this.lastCoopSend = now;
     const b = this.state.bike;
     const firing =
       this.phoneGunLive(now) && this.remoteGun
         ? this.remoteGun.fireHeld || this.remoteGun.autoFire
         : this.state.mouseDown || this.state.partner.autoFire;
+    this.impactFlashes = this.impactFlashes
+      .map((f) => ({ ...f, life: f.life - 0.04 }))
+      .filter((f) => f.life > 0);
     this.coop.send({
       t: 'host',
       at: now,
@@ -1330,6 +1519,12 @@ export class GameApp {
       place: this.state.locationName,
       objective: this.state.objective,
       zombies: this.zombies.slice(0, 48).map((z) => ({ x: z.x, z: z.z, kind: z.kind })),
+      projectiles: this.projectiles.slice(0, 24).map((p) => ({
+        x: p.x,
+        z: p.z,
+        kind: p.explosive ? 2 : p.ignites ? 1 : 0,
+      })),
+      flashes: this.impactFlashes.slice(0, 12),
     });
   }
 
@@ -1545,9 +1740,23 @@ export class GameApp {
       }
     }
 
-    if (!simFrozen && !this.state.paused && this.towTimer <= 0) {
+      if (!simFrozen && !this.state.paused && this.towTimer <= 0 && !this.photoMode) {
+      const pad = sampleGamepad();
+      if (pad.connected) {
+        const keys = this.state.keys;
+        keys.left = pad.steer < -0.2;
+        keys.right = pad.steer > 0.2;
+        keys.up = pad.throttle > 0.15;
+        keys.down = pad.brake > 0.15;
+      }
       const phys = updateBikePhysics(this.state, dt);
-      gameAudio.updateEngine(this.state.bike.speed, this.state.bike.drifting);
+      const gear = Math.max(1, Math.min(5, Math.floor(Math.abs(this.state.bike.speed) / 6) + 1));
+      gameAudio.updateEngine(this.state.bike.speed, this.state.bike.drifting, gear);
+      if (this.state.bike.drifting) {
+        groundTrails.pushDust(this.state.bike.x, this.state.bike.z, this.state.bike.heading, 0.9);
+      } else if (Math.abs(this.state.bike.speed) > 2) {
+        groundTrails.pushTire(this.state.bike.x, this.state.bike.z, this.state.bike.heading, 0.55);
+      }
       if (phys.chunkDx || phys.chunkDz) {
         this.triggerChunk(phys.chunkDx, phys.chunkDz);
         this.persistRun(true);
@@ -1614,7 +1823,11 @@ export class GameApp {
         if (gun.autoAim) {
           threat = updateAim(this.state, this.zombies);
         } else {
-          this.state.partner.aimAngle = gun.aim;
+          let aim = gun.aim;
+          if (flags().aimAssist) {
+            aim = assistAim(aim, this.state.bike.x, this.state.bike.z, this.zombies);
+          }
+          this.state.partner.aimAngle = aim;
           threat = this.zombies.some((z) => Math.hypot(z.x - this.state.bike.x, z.z - this.state.bike.z) < 13.5);
         }
         this.hud.setWeapon(gun.weapon);
@@ -1624,6 +1837,13 @@ export class GameApp {
       const shouldFire = phoneGun
         ? !!(this.remoteGun && (this.remoteGun.fireHeld || (this.remoteGun.autoFire && threat)))
         : this.state.mouseDown || threat || (this.state.partner.autoFire && threat);
+      if (this.laserLine) {
+        const aim = this.state.partner.aimAngle;
+        this.laserLine.position.set(this.state.bike.x, 0, this.state.bike.z);
+        this.laserLine.rotation.y = aim;
+        this.laserLine.visible = true;
+        (this.laserLine.material as THREE.LineBasicMaterial).opacity = shouldFire ? 1 : 0.65;
+      }
       if (shouldFire) {
         if (fireWeapon(this.state, now, this.bundle.entitiesGroup, this.projectiles, false)) {
           gameAudio.fire();
@@ -1701,8 +1921,12 @@ export class GameApp {
             scrapGain += Math.min(8, this.killStreak);
             this.hud.pushKillFeed(`STREAK x${this.killStreak}`);
           }
+          if (phoneGun && Math.abs(this.state.bike.speed) > 5) {
+            scrapGain += coopDoubleKillBonus(1, true);
+          }
           this.state.scrap += scrapGain;
           gameAudio.kill();
+          this.coop?.sendEvent('kill', `KILL +${scrapGain}`);
           this.hud.pushKillFeed(
             z.kind === 'mutant'
               ? `MUTANT DOWN +${scrapGain}`
@@ -1711,6 +1935,8 @@ export class GameApp {
                 : `${z.kind.toUpperCase()} DOWN +${scrapGain}`,
           );
           if (z.kind === 'mutant') this.triggerHitStop(0.05);
+          rumbleGamepad(90, 0.35, 0.55);
+          this.impactFlashes.push({ x: z.x, z: z.z, life: 0.35 });
           this.checkProgression();
           continue;
         }
@@ -1755,11 +1981,17 @@ export class GameApp {
           if (fell <= 0) return;
           cityFell += fell;
           this.spawnBurst(x, 0.35, z, 0x78716c, breach <= 1 ? 6 : 12, 4.5);
+          this.debris.spawnBurst(x, 0.5, z, this.bundle.entitiesGroup, Math.min(14, fell));
+          this.smoke.spawnColumn(x, z, this.bundle.entitiesGroup, fell / 6);
+          this.impactFlashes.push({ x, z, life: 0.5 });
           if (breach > 1) {
             this.hud.pushKillFeed(fell > 6 ? 'STRUCTURE DOWN' : 'WALL DOWN');
-            this.state.scrap += 4;
+            this.hud.setSubtitle(fell > 6 ? 'BUILDING DOWN' : 'WALL DOWN');
+            this.state.scrap += 4 + this.structures.takePendingScrap();
             gameAudio.blast();
+            this.coop?.sendEvent('building', fell > 6 ? 'BUILDING DOWN' : 'WALL DOWN');
             this.spawnWord(x, 1.4, z, 'BOOM');
+            rumbleGamepad(180, 0.5, 0.85);
           }
         },
       );
@@ -1771,6 +2003,13 @@ export class GameApp {
         this.zombies,
         this.state.bike,
       );
+      for (const ev of this.structures.drainCollapseEvents()) {
+        this.debris.spawnBurst(ev.wx, 0.5, ev.wz, this.bundle.entitiesGroup, Math.min(14, ev.voxelCount));
+        this.smoke.spawnColumn(ev.wx, ev.wz, this.bundle.entitiesGroup, ev.voxelCount / 6);
+      }
+      this.debris.update(dt);
+      this.smoke.update(dt);
+      this.state.scrap += this.structures.takePendingScrap();
       if (cityFell > 0) {
         this.recomputeFlow();
         this.hud.markRadarDirty();
@@ -1886,12 +2125,82 @@ export class GameApp {
     const dmgV = this.state.reduceMotion ? 0 : Math.max(0, (55 - this.state.bike.hp) / 55) * 0.55;
     this.hud.setDamageVignette(dmgV + (this.towTimer > 0 ? 0.25 : 0));
 
+    // Trip HUD + day/night + weather cadence
+    const bikeLat =
+      this.state.baseLat + (this.state.bike.z / (GRID_L * 1.4)) * (GRID_L * 1.4 * 0.000009);
+    const bikeLon =
+      this.state.baseLon + (this.state.bike.x / (GRID_W * 1.4)) * (GRID_W * 1.4 * 0.000012);
+    this.trip.setBikePosition(bikeLat, bikeLon, {
+      fastTravel: Math.abs(this.state.bike.speed) > 14,
+    });
+    const tripHud = this.trip.getHudSnapshot();
+    if (tripHud.destinationName) {
+      this.hud.setDestHud(
+        `→ ${tripHud.destinationName.toUpperCase()} · ${tripHud.distanceMiles?.toFixed(1) ?? '—'} mi · ETA ${tripHud.etaMinutes ?? '—'}m · ${tripHud.bearingLabel} · ${tripHud.odometerMiles.toFixed(1)} mi`,
+      );
+    }
+    gameAudio.updateThreatMusic(Math.min(1, this.zombies.length / 18));
+    if (this.state.bike.fuel < 20 && Math.random() < 0.002) {
+      this.hud.setSubtitle(gameAudio.bark('Fuel low'));
+    }
+
+    if (this.photoMode) {
+      this.photoOrbit += dt * 0.35;
+      this.state.cameraYawOffset = this.photoOrbit;
+    }
+
+    const frameDtMs = this.lastFrameAt ? (now - this.lastFrameAt) * 1000 : 16;
+    this.lastFrameAt = now;
+    this.frameMsEma = this.frameMsEma * 0.9 + frameDtMs * 0.1;
+    if (this.frameMsEma > 18) {
+      const pr = Math.max(0.5, this.bundle.renderer.getPixelRatio() * 0.92);
+      this.bundle.renderer.setPixelRatio(pr);
+    } else if (this.frameMsEma < 14 && Math.random() < 0.02) {
+      fitRenderer(this.bundle.renderer);
+    }
+    if (this.perfHud) {
+      this.perfHud.textContent = `FPS ${Math.round(1000 / Math.max(1, this.frameMsEma))} · PR ${this.bundle.renderer.getPixelRatio().toFixed(2)} · Z ${this.zombies.length} · SNAP ${this.coop?.connected ? 'on' : 'off'}`;
+    }
+
+    this.weatherTimer += dt;
+    if (flags().weather && this.weatherTimer > 45) {
+      this.weatherTimer = 0;
+      void fetchWeather(this.state.baseLat, this.state.baseLon).then((w) => {
+        if (!w) return;
+        const fog = this.bundle.scene.fog as THREE.FogExp2;
+        if (w.fog || w.rain) fog.density = Math.min(0.01, fog.density + 0.0015);
+        if (w.snow) this.hud.setSubtitle('SNOW');
+      });
+    }
+    const phase = getDayPhase(this.state.baseLat, this.state.baseLon, new Date());
+    if (phase === 'night' && this.state.timeOfDayIndex !== 2) {
+      /* leave manual time unless cinema — street lamps via midnight preset optional */
+    }
+
     if (this.inspector.isOpen()) {
       this.inspector.update(now);
       const orbit = this.inspector.getOrbitCamera(new THREE.Vector3(0, 0.8, 0));
       this.bundle.camera.position.lerp(orbit.pos, 10 * dt);
       this.bundle.camera.lookAt(orbit.look);
     } else {
+      // Frame bike + nearest threat with a soft yaw bias
+      let nearest: ZombieEntity | null = null;
+      let nd = 24;
+      for (const z of this.zombies) {
+        const d = Math.hypot(z.x - this.state.bike.x, z.z - this.state.bike.z);
+        if (d < nd) {
+          nd = d;
+          nearest = z;
+        }
+      }
+      if (nearest && !this.photoMode) {
+        const ang = Math.atan2(nearest.x - this.state.bike.x, nearest.z - this.state.bike.z);
+        this.state.cameraYawOffset = THREE.MathUtils.lerp(
+          this.state.cameraYawOffset,
+          ang * 0.12,
+          1.2 * dt,
+        );
+      }
       updateCamera(
         this.bundle.camera,
         this.state.bike.x,
@@ -1902,7 +2211,6 @@ export class GameApp {
         dt,
         this.shake,
       );
-      // Keep sky disc orientation coherent with orbit yaw
       this.bundle.skyDome.rotation.y = this.state.cameraYawOffset * 0.35;
       this.updateGisLabels();
     }

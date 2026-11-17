@@ -1,0 +1,17 @@
+{
+  "name": "Pillion · Gridfall",
+  "short_name": "Pillion",
+  "description": "Cozy apocalypse diorama — co-op bike ride and gunner pad",
+  "start_url": "/join",
+  "display": "standalone",
+  "background_color": "#0b0d12",
+  "theme_color": "#0b0d12",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}
